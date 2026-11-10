@@ -567,8 +567,10 @@ document.querySelectorAll(".quick-btn[data-range]").forEach(button =>
 $("trendsFilter").addEventListener("click", () => {
   const isExpanded = $("trendsFilter").getAttribute("aria-expanded") === "true";
   $("trendPanels").hidden = isExpanded;
+  document.body.classList.toggle("trends-only", !isExpanded);
   $("trendsFilter").setAttribute("aria-expanded", String(!isExpanded));
   $("trendsFilter").classList.toggle("active", !isExpanded);
+  $("trendsFilter").textContent = isExpanded ? "Trends" : "Dashboard";
 });
 ["startDate", "endDate", "regionFilter", "vendorFilter", "laneFilter", "originFilter", "flightFilter"].forEach(id => {
   $(id).addEventListener("change", () => {

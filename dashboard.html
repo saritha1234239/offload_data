@@ -78,6 +78,9 @@
     .trend-legend-item { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #4f5b68; font-size: 10px; }
     .trend-legend-item i { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; background: var(--trend-color); }
     .trend-note { margin-top: 8px; color: var(--muted); font-size: 10px; }
+    body.trends-only .page > .legend,
+    body.trends-only #metrics,
+    body.trends-only .grid > section { display: none; }
 
     .table-head, .bar-row { display: grid; align-items: center; gap: 12px; }
     .table-head { color: #555; font-size: 10px; font-weight: 650; padding: 0 0 6px; }
