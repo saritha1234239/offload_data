@@ -2,11 +2,21 @@ import json
 import os
 import socket
 import subprocess
+import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
+from workbook_sync import WorkbookAutoSync, WorkbookSyncError
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_WORKBOOK_PATH = "https://criticalogindia-my.sharepoint.com/personal/saptarshi_maji_criticalog_com/Documents/Desktop/Midmile%20Management/LH%20performance%20tracker.xlsx?web=1"
+DATA_PATH = os.path.join(BASE_DIR, "workbook-data.js")
+WORKBOOK_REFRESH_SECONDS = int(os.environ.get("WORKBOOK_REFRESH_SECONDS", "300"))
+WORKBOOK_AUTO_SYNC = WorkbookAutoSync(
+    os.environ.get("WORKBOOK_DOWNLOAD_URL", ""),
+    DATA_PATH,
+    WORKBOOK_REFRESH_SECONDS,
+)
 
 
 def resolve_workbook_path():
@@ -37,6 +47,18 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 
 
 def run_workbook_refresh(workbook_path=None):
+    if WORKBOOK_AUTO_SYNC.configured:
+        try:
+            result = WORKBOOK_AUTO_SYNC.refresh_once()
+            return {
+                "ok": True,
+                "returnCode": 0,
+                "rows": result["rows"],
+                "version": result["version"],
+            }
+        except WorkbookSyncError as exc:
+            return {"ok": False, "returnCode": 502, "output": str(exc)}
+
     target_path = workbook_path or WORKBOOK_PATH
     if os.name != "nt":
         return {
@@ -77,7 +99,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.path = "/dashboard.html"
 
         if self.path.startswith("/api/health"):
-            payload = {"status": "ok", "port": PORT}
+            payload = {
+                "status": "ok",
+                "port": PORT,
+                "workbookAutoSync": WORKBOOK_AUTO_SYNC.status(),
+            }
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
@@ -86,8 +112,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
 
         if self.path.startswith("/api/refresh"):
-            result = run_workbook_refresh()
-            status = 200 if result["ok"] else 501 if result["returnCode"] == 501 else 500
+            if WORKBOOK_AUTO_SYNC.configured and os.name != "nt":
+                result = {
+                    "ok": False,
+                    "returnCode": 405,
+                    "output": "Hosted workbook refresh runs on the configured schedule.",
+                }
+            else:
+                result = run_workbook_refresh()
+            status = 200 if result["ok"] else result["returnCode"] if result["returnCode"] in (405, 501, 502) else 500
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
@@ -125,8 +158,12 @@ if __name__ == "__main__":
         except Exception as exc:
             print(f"Initial refresh warning: {exc}")
     else:
-        print("Serving the bundled workbook-data.js snapshot; workbook refresh is unavailable on this host.")
+        print("Serving the bundled workbook-data.js snapshot until workbook auto-sync succeeds.")
 
     httpd = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
+    WORKBOOK_AUTO_SYNC.start()
     print(f"Local network access: http://{get_local_ip()}:{PORT}")
-    httpd.serve_forever()
+    try:
+        httpd.serve_forever()
+    finally:
+        WORKBOOK_AUTO_SYNC.stop()

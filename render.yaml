@@ -7,3 +7,5 @@ services:
     envVars:
       - key: HOST
         value: 0.0.0.0
+      - key: WORKBOOK_REFRESH_SECONDS
+        value: "300"
