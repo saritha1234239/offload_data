@@ -71,6 +71,12 @@
     .panel-subtitle, .footer-note, .metric-caption { display: none; }
     .chart { min-height: 148px; }
     .empty-chart { color: var(--muted); display: grid; place-items: center; height: 180px; font-size: 13px; }
+    .trend-chart { width: 100%; overflow: hidden; }
+    .trend-chart svg { display: block; width: 100%; height: 260px; overflow: visible; }
+    .trend-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
+    .trend-legend-item { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #4f5b68; font-size: 10px; }
+    .trend-legend-item i { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; background: var(--trend-color); }
+    .trend-note { margin-top: 8px; color: var(--muted); font-size: 10px; }
 
     .table-head, .bar-row { display: grid; align-items: center; gap: 12px; }
     .table-head { color: #555; font-size: 10px; font-weight: 650; padding: 0 0 6px; }
@@ -220,6 +226,20 @@
         </div>
         <div id="reasonChart"></div>
         <div class="reason-summary" id="reasonSummary"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Lane bag offload % trends</h2>
+        </div>
+        <div id="laneTrendChart"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Vendor bag offload % trends</h2>
+        </div>
+        <div id="vendorTrendChart"></div>
       </section>
 
       <section class="panel">
