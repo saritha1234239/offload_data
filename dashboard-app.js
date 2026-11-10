@@ -279,20 +279,18 @@ function drawRanked(rows, key, target, label, layout) {
 }
 
 function drawTrend(rows, key, target, label) {
-  const shipmentRows = rows.filter(isShipment);
-  const datedRows = shipmentRows.filter(row => dateForRow(row));
   const weekStartFor = date => {
     const dateNumber = Date.parse(`${date}T00:00:00Z`);
     const dayOfWeek = new Date(dateNumber).getUTCDay();
     const daysSinceMonday = (dayOfWeek + 6) % 7;
     return new Date(dateNumber - daysSinceMonday * 86400000).toISOString().slice(0, 10);
   };
-  const weeks = [...new Set(datedRows.map(row => weekStartFor(dateForRow(row))))].sort();
-  const groups = groupBy(datedRows, key).map(group => {
+  const validDatedRows = rows.filter(row => isShipment(row) && bagsKnown(row) && row.bags > 0 && dateForRow(row));
+  const weeks = [...new Set(validDatedRows.map(row => weekStartFor(dateForRow(row))))].sort();
+  const groups = groupBy(validDatedRows, key).map(group => {
     const weekly = new Map();
-    group.items.filter(bagsKnown).forEach(row => {
+    group.items.forEach(row => {
       const date = dateForRow(row);
-      if (!date) return;
       const week = weekStartFor(date);
       const totals = weekly.get(week) || { bags: 0, offloadedBags: 0 };
       totals.bags += row.bags;
@@ -320,6 +318,7 @@ function drawTrend(rows, key, target, label) {
   const plotHeight = height - top - bottom;
   const weekNumbers = weeks.map(week => Date.parse(`${week}T00:00:00Z`) / 86400000);
   const weekSpan = weekNumbers[weekNumbers.length - 1] - weekNumbers[0];
+  const crossesCalendarYears = new Set(weeks.map(week => week.slice(0, 4))).size > 1;
   const x = index => left + (weekSpan === 0 ? plotWidth / 2 : (weekNumbers[index] - weekNumbers[0]) / weekSpan * plotWidth);
   const y = rate => top + (100 - rate) / 100 * plotHeight;
   const colors = ["#14566a", "#20a6a0", "#e27b75", "#8268a8", "#d18b25"];
@@ -333,7 +332,7 @@ function drawTrend(rows, key, target, label) {
     const dateLabel = new Date(`${week}T00:00:00Z`).toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
-      year: weekSpan > 365 ? "2-digit" : undefined,
+      year: weekSpan > 365 || crossesCalendarYears ? "2-digit" : undefined,
       timeZone: "UTC"
     });
     return `<text x="${x(index)}" y="${height - 12}" text-anchor="${index === 0 ? "start" : index === weeks.length - 1 ? "end" : "middle"}" fill="#64707d" font-size="10"><title>Week of ${escapeHtml(week)}</title>${escapeHtml(dateLabel)}</text>`;
@@ -363,7 +362,7 @@ function drawTrend(rows, key, target, label) {
 
   $(target).innerHTML = `<div class="trend-chart">
     <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Weekly bag offload percentage trends for top ${label.toLowerCase()} by eligible bag volume">${grid}${series}${ticks}</svg>
-  </div><div class="trend-legend">${legend}</div><div class="trend-note">Weekly offloaded bags ÷ total valid bags (Monday–Sunday). Top five ${escapeHtml(label.toLowerCase())} by eligible bag volume; hover a point for details.</div>`;
+  </div><div class="trend-legend">${legend}</div><div class="trend-note">Weekly rate = summed offloaded bags ÷ summed total bags, using valid positive bag totals (Monday–Sunday). Weeks at date-filter boundaries use only the selected dates. Top five ${escapeHtml(label.toLowerCase())} by eligible bag volume; hover a point for details.</div>`;
 }
 
 function displayField(row, key) {
