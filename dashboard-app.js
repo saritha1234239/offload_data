@@ -115,7 +115,7 @@ function resetToAllDates() {
   activeRangeMode = "all";
   $("startDate").value = minDate || "";
   $("endDate").value = maxDate || "";
-  document.querySelectorAll(".quick-btn").forEach(button =>
+  document.querySelectorAll(".quick-btn[data-range]").forEach(button =>
     button.classList.toggle("active", button.dataset.range === "all"));
   render();
 }
@@ -527,7 +527,7 @@ function applyRange(range) {
   const values = buildRangeValues(range);
   $("startDate").value = values.start;
   $("endDate").value = values.end;
-  document.querySelectorAll(".quick-btn").forEach(button =>
+  document.querySelectorAll(".quick-btn[data-range]").forEach(button =>
     button.classList.toggle("active", button.dataset.range === range));
   render();
 }
@@ -545,7 +545,7 @@ function syncDateRangeState() {
   });
 
   activeRangeMode = matchedRange || null;
-  document.querySelectorAll(".quick-btn").forEach(button =>
+  document.querySelectorAll(".quick-btn[data-range]").forEach(button =>
     button.classList.toggle("active", button.dataset.range === activeRangeMode));
 }
 
@@ -562,11 +562,17 @@ function refreshQuickFilterIfNeeded() {
   }
 }
 
-document.querySelectorAll(".quick-btn").forEach(button =>
+document.querySelectorAll(".quick-btn[data-range]").forEach(button =>
   button.addEventListener("click", () => applyRange(button.dataset.range)));
+$("trendsFilter").addEventListener("click", () => {
+  const isExpanded = $("trendsFilter").getAttribute("aria-expanded") === "true";
+  $("trendPanels").hidden = isExpanded;
+  $("trendsFilter").setAttribute("aria-expanded", String(!isExpanded));
+  $("trendsFilter").classList.toggle("active", !isExpanded);
+});
 ["startDate", "endDate", "regionFilter", "vendorFilter", "laneFilter", "originFilter", "flightFilter"].forEach(id => {
   $(id).addEventListener("change", () => {
-    document.querySelectorAll(".quick-btn").forEach(button => button.classList.remove("active"));
+    document.querySelectorAll(".quick-btn[data-range]").forEach(button => button.classList.remove("active"));
     if ($("startDate").value && $("endDate").value && $("startDate").value > $("endDate").value) {
       $("filterStatus").textContent = "Start date must be on or before end date.";
       return;

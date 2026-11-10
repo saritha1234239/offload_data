@@ -42,6 +42,7 @@
     .quick-btn { border: 1px solid #c9c9c2; border-radius: 999px; background: #fff; padding: 6px 4px; color: #222; font-size: 10px; white-space: nowrap; }
     .quick-btn:hover { border-color: #9abbe1; }
     .quick-btn.active { border-color: var(--blue); background: var(--pale-blue); color: var(--navy); font-weight: 700; box-shadow: inset 0 0 0 1px var(--blue); }
+    .trends-filter { font-size: 10px; height: 33px; padding: 0 12px; }
     .select-wrap { display: flex; align-items: center; }
     .select-wrap label { display:none; }
     select { height: 33px; min-width: 92px; border: 1px solid #c9c9c2; border-radius: 7px; padding: 0 22px 0 8px; color: #222; background: #fff; font-size: 10px; }
@@ -193,6 +194,7 @@
         <div class="select-wrap"><label for="laneFilter">Lane</label><select id="laneFilter"></select></div>
         <div class="select-wrap"><label for="originFilter">Origin</label><select id="originFilter"></select></div>
         <div class="select-wrap"><label for="flightFilter">Flight</label><select id="flightFilter"></select></div>
+        <button class="quick-btn trends-filter" id="trendsFilter" type="button" aria-expanded="false" aria-controls="trendPanels">Trends</button>
         <span class="filter-status" id="filterStatus" aria-live="polite"></span>
       </div>
     </section>
@@ -228,19 +230,21 @@
         <div class="reason-summary" id="reasonSummary"></div>
       </section>
 
-      <section class="panel">
-        <div class="panel-header">
-          <h2>Lane bag offload % trends</h2>
-        </div>
-        <div id="laneTrendChart"></div>
-      </section>
+      <div id="trendPanels" hidden>
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Lane bag offload % trends</h2>
+          </div>
+          <div id="laneTrendChart"></div>
+        </section>
 
-      <section class="panel">
-        <div class="panel-header">
-          <h2>Vendor bag offload % trends</h2>
-        </div>
-        <div id="vendorTrendChart"></div>
-      </section>
+        <section class="panel">
+          <div class="panel-header">
+            <h2>Vendor bag offload % trends</h2>
+          </div>
+          <div id="vendorTrendChart"></div>
+        </section>
+      </div>
 
       <section class="panel">
         <div class="panel-header">
