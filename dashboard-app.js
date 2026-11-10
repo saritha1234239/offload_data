@@ -102,9 +102,9 @@ function populateFilters(preserveSelection = false) {
 }
 
 function updateDateBounds() {
-  const datedRecords = records.filter(row => row.date);
-  maxDate = datedRecords.reduce((latest, row) => row.date > latest ? row.date : latest, "");
-  minDate = datedRecords.reduce((earliest, row) => row.date < earliest ? row.date : earliest, maxDate);
+  const dates = records.map(dateForRow).filter(Boolean);
+  maxDate = dates.reduce((latest, value) => value > latest ? value : latest, "");
+  minDate = dates.reduce((earliest, value) => value < earliest ? value : earliest, maxDate);
   ["startDate", "endDate"].forEach(id => {
     $(id).min = minDate;
     $(id).max = maxDate;
@@ -125,17 +125,35 @@ updateDateBounds();
 resetToAllDates();
 
 function rowMatchesDateRange(row, start, end) {
-  const candidates = [row.date, ...(Array.isArray(row.dateVariants) ? row.dateVariants : [])].filter(Boolean);
-  if (!candidates.length) {
+  const date = dateForRow(row);
+  if (!date) {
     return !start && !end;
   }
   if (!start && !end) {
     return true;
   }
-  return candidates.some(dateValue => {
-    const dateOkay = (!start || dateValue >= start) && (!end || dateValue <= end);
-    return dateOkay;
-  });
+  return (!start || date >= start) && (!end || date <= end);
+}
+
+function isIsoDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day;
+}
+
+function dateForRow(row) {
+  if (isIsoDate(row.date)) {
+    return row.date;
+  }
+  if (!Array.isArray(row.dateVariants)) {
+    return "";
+  }
+  return row.dateVariants.find(isIsoDate) || "";
 }
 
 function currentRows() {
@@ -256,6 +274,7 @@ function drawRanked(rows, key, target, label, layout) {
 
 function displayField(row, key) {
   if (key.startsWith("raw_")) return row.sourceValues?.[key] ?? "";
+  if (key === "date") return dateForRow(row);
   if (key === "recordType" && !row.mawb && Number.isFinite(row.bags) && Number.isFinite(row.offloadedBags)) {
     return "Shipment data (no MAWB)";
   }
@@ -272,7 +291,7 @@ let activeBarName = "";
 function showBarDetails(name, rows) {
   activeBarName = name;
   activeBarRows = rows.slice().sort((a, b) =>
-    (a.date || "").localeCompare(b.date || "") || a.sourceSheet.localeCompare(b.sourceSheet) || a.sourceRow - b.sourceRow
+    dateForRow(a).localeCompare(dateForRow(b)) || a.sourceSheet.localeCompare(b.sourceSheet) || a.sourceRow - b.sourceRow
   );
   $("barDialogTitle").textContent = name;
   $("barDialogSummary").textContent =
