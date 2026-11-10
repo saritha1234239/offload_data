@@ -6,17 +6,68 @@ import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
-from workbook_sync import WorkbookAutoSync, WorkbookSyncError
+from workbook_sync import WorkbookAutoSync, WorkbookSyncError, fetch_graph_workbook
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_WORKBOOK_PATH = "https://criticalogindia-my.sharepoint.com/personal/saptarshi_maji_criticalog_com/Documents/Desktop/Midmile%20Management/LH%20performance%20tracker.xlsx?web=1"
 DATA_PATH = os.path.join(BASE_DIR, "workbook-data.js")
 WORKBOOK_REFRESH_SECONDS = int(os.environ.get("WORKBOOK_REFRESH_SECONDS", "300"))
-WORKBOOK_AUTO_SYNC = WorkbookAutoSync(
-    os.environ.get("WORKBOOK_DOWNLOAD_URL", ""),
-    DATA_PATH,
-    WORKBOOK_REFRESH_SECONDS,
-)
+
+
+def create_workbook_sync():
+    graph_env = {
+        "tenant ID": os.environ.get("MICROSOFT_TENANT_ID", "").strip(),
+        "client ID": os.environ.get("MICROSOFT_CLIENT_ID", "").strip(),
+        "client secret": os.environ.get("MICROSOFT_CLIENT_SECRET", ""),
+        "drive ID": os.environ.get("MICROSOFT_GRAPH_DRIVE_ID", "").strip(),
+        "file item ID": os.environ.get("MICROSOFT_GRAPH_ITEM_ID", "").strip(),
+    }
+    configured_graph_values = {
+        label: value for label, value in graph_env.items() if value
+    }
+    if configured_graph_values:
+        missing = [label for label, value in graph_env.items() if not value]
+        if missing:
+            missing_settings = ", ".join(
+                {
+                    "tenant ID": "MICROSOFT_TENANT_ID",
+                    "client ID": "MICROSOFT_CLIENT_ID",
+                    "client secret": "MICROSOFT_CLIENT_SECRET",
+                    "drive ID": "MICROSOFT_GRAPH_DRIVE_ID",
+                    "file item ID": "MICROSOFT_GRAPH_ITEM_ID",
+                }[label]
+                for label in missing
+            )
+            return WorkbookAutoSync(
+                "",
+                DATA_PATH,
+                WORKBOOK_REFRESH_SECONDS,
+                source="microsoft_graph",
+                configuration_error=f"Missing required Render settings: {missing_settings}.",
+            )
+
+        return WorkbookAutoSync(
+            "",
+            DATA_PATH,
+            WORKBOOK_REFRESH_SECONDS,
+            fetcher=lambda: fetch_graph_workbook(
+                tenant_id=graph_env["tenant ID"],
+                client_id=graph_env["client ID"],
+                client_secret=graph_env["client secret"],
+                drive_id=graph_env["drive ID"],
+                item_id=graph_env["file item ID"],
+            ),
+            source="microsoft_graph",
+        )
+
+    return WorkbookAutoSync(
+        os.environ.get("WORKBOOK_DOWNLOAD_URL", ""),
+        DATA_PATH,
+        WORKBOOK_REFRESH_SECONDS,
+    )
+
+
+WORKBOOK_AUTO_SYNC = create_workbook_sync()
 
 
 def resolve_workbook_path():
@@ -47,6 +98,12 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 
 
 def run_workbook_refresh(workbook_path=None):
+    if WORKBOOK_AUTO_SYNC.configuration_error:
+        return {
+            "ok": False,
+            "returnCode": 503,
+            "output": WORKBOOK_AUTO_SYNC.configuration_error,
+        }
     if WORKBOOK_AUTO_SYNC.configured:
         try:
             result = WORKBOOK_AUTO_SYNC.refresh_once()

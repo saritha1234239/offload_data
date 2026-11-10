@@ -9,8 +9,8 @@ from collections import OrderedDict
 from datetime import date, datetime, time
 from io import BytesIO
 from urllib.error import URLError
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import quote, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel, to_excel
@@ -363,8 +363,78 @@ def fetch_workbook(url):
     return content
 
 
-def refresh_from_url(url, data_path):
-    data = parse_workbook(fetch_workbook(url))
+class _GraphRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        redirected = super().redirect_request(
+            request, response, code, message, headers, new_url
+        )
+        if redirected is None:
+            return None
+        old_host = (urlparse(request.full_url).hostname or "").lower()
+        new_host = (urlparse(new_url).hostname or "").lower()
+        if old_host != new_host:
+            for name in tuple(redirected.headers):
+                if name.lower() == "authorization":
+                    del redirected.headers[name]
+            for name in tuple(redirected.unredirected_hdrs):
+                if name.lower() == "authorization":
+                    del redirected.unredirected_hdrs[name]
+        return redirected
+
+
+def fetch_graph_workbook(tenant_id, client_id, client_secret, drive_id, item_id):
+    try:
+        import msal
+    except ImportError as exc:
+        raise WorkbookSyncError("Microsoft Graph sync requires the msal package.") from exc
+
+    authority = f"https://login.microsoftonline.com/{tenant_id}"
+    application = msal.ConfidentialClientApplication(
+        client_id,
+        authority=authority,
+        client_credential=client_secret,
+    )
+    token_result = application.acquire_token_for_client(
+        scopes=["https://graph.microsoft.com/.default"]
+    )
+    access_token = token_result.get("access_token")
+    if not access_token:
+        raise WorkbookSyncError(
+            "Microsoft Graph authentication failed; verify the app credentials and admin consent."
+        )
+
+    graph_url = (
+        "https://graph.microsoft.com/v1.0/drives/"
+        f"{quote(drive_id, safe='')}/items/{quote(item_id, safe='')}/content"
+    )
+    request = Request(
+        graph_url,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/octet-stream",
+            "User-Agent": "OffloadDashboard/1.0",
+        },
+    )
+    try:
+        opener = build_opener(_GraphRedirectHandler)
+        with opener.open(request, timeout=60) as response:
+            content_length = response.headers.get("Content-Length")
+            if content_length and int(content_length) > MAX_WORKBOOK_BYTES:
+                raise WorkbookSyncError("The source workbook exceeds the 30 MB download limit.")
+            content = response.read(MAX_WORKBOOK_BYTES + 1)
+    except WorkbookSyncError:
+        raise
+    except (OSError, URLError, ValueError) as exc:
+        raise WorkbookSyncError(
+            "Microsoft Graph could not download the configured file; verify the file IDs and its read permission."
+        ) from exc
+    if len(content) > MAX_WORKBOOK_BYTES:
+        raise WorkbookSyncError("The source workbook exceeds the 30 MB download limit.")
+    return content
+
+
+def refresh_from_bytes(workbook_bytes, data_path):
+    data = parse_workbook(workbook_bytes)
     version, content = workbook_data_script(data)
     destination = os.path.abspath(data_path)
     directory = os.path.dirname(destination)
@@ -383,11 +453,26 @@ def refresh_from_url(url, data_path):
     return {"version": version, "rows": len(data["records"])}
 
 
+def refresh_from_url(url, data_path):
+    return refresh_from_bytes(fetch_workbook(url), data_path)
+
+
 class WorkbookAutoSync:
-    def __init__(self, url, data_path, interval_seconds):
+    def __init__(
+        self,
+        url,
+        data_path,
+        interval_seconds,
+        fetcher=None,
+        source=None,
+        configuration_error=None,
+    ):
         if interval_seconds < 60:
             raise ValueError("WORKBOOK_REFRESH_SECONDS must be at least 60.")
         self.url = url.strip()
+        self.fetcher = fetcher
+        self.source = source or ("anonymous_link" if self.url else None)
+        self.configuration_error = configuration_error
         self.data_path = data_path
         self.interval_seconds = interval_seconds
         self._lock = threading.Lock()
@@ -401,12 +486,14 @@ class WorkbookAutoSync:
 
     @property
     def configured(self):
-        return bool(self.url)
+        return bool(self.url or self.fetcher)
 
     def status(self):
         with self._status_lock:
             return {
                 "configured": self.configured,
+                "source": self.source,
+                "configurationError": self.configuration_error,
                 "refreshSeconds": self.interval_seconds,
                 "lastSuccessAt": self._last_success_at,
                 "lastError": self._last_error,
@@ -416,11 +503,14 @@ class WorkbookAutoSync:
 
     def refresh_once(self):
         if not self.configured:
-            raise WorkbookSyncError("Workbook auto-sync is not configured.")
+            raise WorkbookSyncError(
+                self.configuration_error or "Workbook auto-sync is not configured."
+            )
         if not self._lock.acquire(blocking=False):
             raise WorkbookSyncError("A workbook refresh is already in progress.")
         try:
-            result = refresh_from_url(self.url, self.data_path)
+            workbook_bytes = self.fetcher() if self.fetcher else fetch_workbook(self.url)
+            result = refresh_from_bytes(workbook_bytes, self.data_path)
             with self._status_lock:
                 self._last_success_at = datetime.now().astimezone().isoformat(timespec="seconds")
                 self._last_error = None
@@ -449,7 +539,10 @@ class WorkbookAutoSync:
 
     def start(self):
         if not self.configured:
-            print("Workbook auto-sync is disabled; set WORKBOOK_DOWNLOAD_URL to an anonymous HTTPS download link.")
+            if self.configuration_error:
+                print(f"Workbook auto-sync is disabled. {self.configuration_error}")
+            else:
+                print("Workbook auto-sync is disabled; configure Microsoft Graph or WORKBOOK_DOWNLOAD_URL.")
             return
         if self._thread and self._thread.is_alive():
             return

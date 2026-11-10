@@ -1,17 +1,24 @@
 import json
+import os
+import sys
 import tempfile
+import types
 import unittest
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+from urllib.request import Request
 from unittest.mock import patch
 
 from openpyxl import Workbook
 
+import web_server
 from workbook_sync import (
     WorkbookAutoSync,
     WorkbookSyncError,
+    _GraphRedirectHandler,
     _date_variants,
+    fetch_graph_workbook,
     fetch_workbook,
     parse_workbook,
     refresh_from_url,
@@ -123,6 +130,136 @@ class WorkbookSyncTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkbookSyncError, "requires sign-in") as raised:
                 fetch_workbook("https://example.test/shared.xlsx")
         self.assertNotIn("private", str(raised.exception))
+
+    def test_graph_download_uses_bearer_token_and_file_scoped_endpoint(self):
+            class FakeApplication:
+                def __init__(self, client_id, authority, client_credential):
+                    self.client_id = client_id
+                    self.authority = authority
+                    self.client_credential = client_credential
+
+                def acquire_token_for_client(self, scopes):
+                    self.scopes = scopes
+                    return {"access_token": "test-access-token"}
+
+            fake_msal = types.SimpleNamespace(
+                ConfidentialClientApplication=FakeApplication
+            )
+
+            class Response(BytesIO):
+                headers = {"Content-Length": "10"}
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    self.close()
+
+            response = Response(b"workbook!!")
+            captured_requests = []
+
+            def open_request(request, timeout):
+                captured_requests.append(request)
+                return response
+
+            with patch.dict(sys.modules, {"msal": fake_msal}):
+                opener = types.SimpleNamespace(open=open_request)
+                with patch("workbook_sync.build_opener", return_value=opener):
+                    content = fetch_graph_workbook(
+                        "tenant-id", "client-id", "secret", "drive/id", "item id"
+                    )
+
+            self.assertEqual(content, b"workbook!!")
+            request = captured_requests[0]
+            self.assertEqual(
+                request.full_url,
+                "https://graph.microsoft.com/v1.0/drives/drive%2Fid/items/item%20id/content",
+            )
+            self.assertEqual(request.get_header("Authorization"), "Bearer test-access-token")
+            self.assertNotIn("secret", request.headers.values())
+
+    def test_graph_redirect_does_not_forward_bearer_token_to_download_host(self):
+            request = Request(
+                "https://graph.microsoft.com/v1.0/drives/drive/items/item/content",
+                headers={"Authorization": "Bearer test-access-token"},
+            )
+            redirected = _GraphRedirectHandler().redirect_request(
+                request,
+                None,
+                302,
+                "Found",
+                {},
+                "https://download.sharepoint.com/file",
+            )
+
+            self.assertEqual(
+                redirected.full_url, "https://download.sharepoint.com/file"
+            )
+            self.assertIsNone(redirected.get_header("Authorization"))
+
+    def test_graph_authentication_failure_does_not_expose_credentials(self):
+            class FakeApplication:
+                def __init__(self, *_args, **_kwargs):
+                    pass
+
+                def acquire_token_for_client(self, scopes):
+                    return {"error_description": "invalid client secret: private-secret"}
+
+            fake_msal = types.SimpleNamespace(
+                ConfidentialClientApplication=FakeApplication
+            )
+            with patch.dict(sys.modules, {"msal": fake_msal}):
+                with self.assertRaisesRegex(WorkbookSyncError, "authentication failed") as raised:
+                    fetch_graph_workbook("tenant", "client", "private-secret", "drive", "item")
+            self.assertNotIn("private-secret", str(raised.exception))
+
+    def test_graph_auto_sync_uses_shared_atomic_export_path(self):
+            with tempfile.TemporaryDirectory() as directory:
+                destination = Path(directory) / "workbook-data.js"
+                sync = WorkbookAutoSync(
+                    "",
+                    str(destination),
+                    300,
+                    fetcher=workbook_fixture,
+                    source="microsoft_graph",
+                )
+                result = sync.refresh_once()
+
+                self.assertEqual(result["rows"], 8)
+                self.assertEqual(sync.status()["source"], "microsoft_graph")
+                self.assertEqual(sync.status()["rows"], 8)
+                self.assertIn("window.offloadWorkbookRecords", destination.read_text(encoding="utf-8"))
+
+    def test_partial_graph_configuration_reports_missing_settings(self):
+        with patch.dict(os.environ, {"MICROSOFT_CLIENT_ID": "client-id"}, clear=True):
+                sync = web_server.create_workbook_sync()
+
+        self.assertFalse(sync.configured)
+        self.assertIn("MICROSOFT_TENANT_ID", sync.status()["configurationError"])
+        self.assertNotIn("client-id", str(sync.status()))
+
+    def test_complete_graph_configuration_wires_private_fetcher_without_exposing_secret(self):
+        settings = {
+                "MICROSOFT_TENANT_ID": "tenant-id",
+                "MICROSOFT_CLIENT_ID": "client-id",
+                "MICROSOFT_CLIENT_SECRET": "private-secret",
+                "MICROSOFT_GRAPH_DRIVE_ID": "drive-id",
+                "MICROSOFT_GRAPH_ITEM_ID": "item-id",
+        }
+        with patch.dict(os.environ, settings, clear=True):
+                with patch("web_server.fetch_graph_workbook", return_value=b"workbook") as fetch:
+                    sync = web_server.create_workbook_sync()
+                    self.assertEqual(sync.fetcher(), b"workbook")
+
+        self.assertTrue(sync.configured)
+        fetch.assert_called_once_with(
+                tenant_id="tenant-id",
+                client_id="client-id",
+                client_secret="private-secret",
+                drive_id="drive-id",
+                item_id="item-id",
+        )
+        self.assertNotIn("private-secret", str(sync.status()))
 
     def test_dot_separated_ambiguous_dates_keep_both_region_interpretations(self):
         self.assertEqual(
