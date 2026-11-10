@@ -215,15 +215,16 @@ function drawRegion(rows) {
     totalBags: sum(group.items.filter(row => Number.isInteger(row.bags) && row.bags >= 0), "bags"),
     eligibleBags: sum(group.items.filter(bagsKnown), "bags"),
     offloadedBags: sum(group.items.filter(bagsKnown), "offloadedBags"),
+    impactedCons: sum(group.items, "impactedCons"),
     rate: group.items.some(bagsKnown) ? rateFor(group.items) : null
   })).sort((a, b) => a.name.localeCompare(b.name));
   const network = rateFor(shipmentRows);
   const maxBags = Math.max(1, ...groups.map(group => group.rate === null ? group.totalBags : group.eligibleBags));
   $("regionChart").innerHTML = groups.length
-    ? `<div class="table-head region-layout"><span>Origin region</span><span></span><span>Rate</span><span class="count">Offloaded / bags</span></div>` +
+    ? `<div class="table-head region-layout"><span>Origin region</span><span></span><span>Rate</span><span class="count">Offloaded / bags</span><span class="count">Impacted cons.</span></div>` +
       groups.map(group => `<div class="bar-row region-layout" title="${escapeHtml(group.name)}: ${group.rate === null ? `${numberText(group.totalBags)} total bags; no valid offload data` : formatPct(group.rate)}">
         <span class="bar-label">${escapeHtml(group.name)}</span><div class="track-cell"><div class="bar-track threshold" style="--threshold:${Math.min(network,100)}%"><div class="bar-fill${group.rate === null ? " bar-no-data" : ""}" style="width:${(group.rate === null ? group.totalBags : group.eligibleBags) / maxBags * 100}%"><span class="bar-before" style="width:${group.rate === null ? 0 : Math.max(0,100-group.rate)}%"></span><span class="bar-after" style="width:${group.rate === null ? 0 : Math.min(group.rate,100)}%"></span></div></div></div>
-        <span class="value">${group.rate === null ? "—" : formatPct(group.rate)}</span><span class="count">${group.rate === null ? (group.totalBags ? `0 / ${numberText(group.totalBags)}` : "No valid bag data") : `${numberText(group.offloadedBags)} / ${numberText(group.eligibleBags)}`}</span></div>`).join("")
+        <span class="value">${group.rate === null ? "—" : formatPct(group.rate)}</span><span class="count">${group.rate === null ? (group.totalBags ? `0 / ${numberText(group.totalBags)}` : "No valid bag data") : `${numberText(group.offloadedBags)} / ${numberText(group.eligibleBags)}`}</span><span class="count">${numberText(group.impactedCons)}</span></div>`).join("")
     : `<div class="empty-chart">No regional data.</div>`;
   $("regionChart").querySelectorAll(".bar-row").forEach((element, index) =>
     makeBarInteractive(element, groups[index].name, groups[index].items));
@@ -236,14 +237,15 @@ function drawRemarks(rows) {
     const withRemark = sum(group.items.filter(hasRemark), "offloadedBags");
     const withoutRemark = sum(group.items.filter(row => !hasRemark(row)), "offloadedBags");
     const totalOffloadedBags = sum(group.items, "offloadedBags");
-    return { ...group, withRemark, withoutRemark, totalOffloadedBags, rate: totalOffloadedBags ? withRemark / totalOffloadedBags * 100 : 0 };
+    const impactedCons = sum(group.items, "impactedCons");
+    return { ...group, withRemark, withoutRemark, totalOffloadedBags, impactedCons, rate: totalOffloadedBags ? withRemark / totalOffloadedBags * 100 : 0 };
   }).sort((a, b) => a.name.localeCompare(b.name));
 
   $("reasonChart").innerHTML = groups.length
-    ? `<div class="table-head reason-layout"><span>Origin region</span><span></span><span>With remark</span><span class="count">Offloaded bags</span></div>` +
+    ? `<div class="table-head reason-layout"><span>Origin region</span><span></span><span>With remark</span><span class="count">Offloaded bags</span><span class="count">Impacted cons.</span></div>` +
       groups.map(group => `<div class="bar-row reason-layout" title="${escapeHtml(group.name)}: ${numberText(group.withRemark)} bags with a remark, ${numberText(group.withoutRemark)} bags without a remark">
         <span class="bar-label">${escapeHtml(group.name)}</span><div class="track-cell"><div class="bar-track"><div class="bar-fill" style="width:100%"><span class="bar-reason" style="width:${group.rate}%"></span><span class="bar-missing" style="width:${100 - group.rate}%"></span></div></div></div>
-        <span class="value">${formatPct(group.rate)} (${numberText(group.withRemark)})</span><span class="count">${numberText(group.totalOffloadedBags)}</span></div>`).join("")
+        <span class="value">${formatPct(group.rate)} (${numberText(group.withRemark)})</span><span class="count">${numberText(group.totalOffloadedBags)}</span><span class="count">${numberText(group.impactedCons)}</span></div>`).join("")
     : `<div class="empty-chart">No recorded offloads in this selection.</div>`;
   $("reasonChart").querySelectorAll(".bar-row").forEach((element, index) =>
     makeBarInteractive(element, `${groups[index].name} — remarks`, groups[index].items));
@@ -260,16 +262,17 @@ function drawRanked(rows, key, target, label, layout) {
     ...group,
     eligibleBags: sum(group.items.filter(bagsKnown), "bags"),
     offloadedBags: sum(group.items.filter(bagsKnown), "offloadedBags"),
+    impactedCons: sum(group.items, "impactedCons"),
     rate: rateFor(group.items)
   })).filter(group => group.eligibleBags > 0)
     .sort((a, b) => b.rate - a.rate || b.eligibleBags - a.eligibleBags || a.name.localeCompare(b.name))
     .slice(0, 10);
   const maxBags = Math.max(1, ...groups.map(group => group.eligibleBags));
   $(target).innerHTML = groups.length
-    ? `<div class="table-head ${layout}"><span>${label}</span><span></span><span>Rate</span><span class="count">Offloaded / bags</span></div>` +
+    ? `<div class="table-head ${layout}"><span>${label}</span><span></span><span>Rate</span><span class="count">Offloaded / bags</span><span class="count">Impacted cons.</span></div>` +
       groups.map(group => `<div class="bar-row ${layout}" title="${escapeHtml(group.name)}: ${formatPct(group.rate)}">
         <span class="bar-label">${escapeHtml(group.name)}</span><div class="track-cell"><div class="bar-track"><div class="bar-fill" style="width:${group.eligibleBags / maxBags * 100}%"><span class="bar-before" style="width:${Math.max(0,100-group.rate)}%"></span><span class="bar-after" style="width:${Math.min(group.rate,100)}%"></span></div></div></div>
-        <span class="value">${formatPct(group.rate)}</span><span class="count">${numberText(group.offloadedBags)} / ${numberText(group.eligibleBags)}</span></div>`).join("")
+        <span class="value">${formatPct(group.rate)}</span><span class="count">${numberText(group.offloadedBags)} / ${numberText(group.eligibleBags)}</span><span class="count">${numberText(group.impactedCons)}</span></div>`).join("")
     : `<div class="empty-chart">No data with recorded bag counts.</div>`;
   $(target).querySelectorAll(".bar-row").forEach((element, index) =>
     makeBarInteractive(element, groups[index].name, groups[index].items));
