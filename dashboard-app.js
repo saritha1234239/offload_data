@@ -281,24 +281,31 @@ function drawRanked(rows, key, target, label, layout) {
 function drawTrend(rows, key, target, label) {
   const shipmentRows = rows.filter(isShipment);
   const datedRows = shipmentRows.filter(row => dateForRow(row));
-  const dates = [...new Set(datedRows.map(dateForRow))].sort();
+  const weekStartFor = date => {
+    const dateNumber = Date.parse(`${date}T00:00:00Z`);
+    const dayOfWeek = new Date(dateNumber).getUTCDay();
+    const daysSinceMonday = (dayOfWeek + 6) % 7;
+    return new Date(dateNumber - daysSinceMonday * 86400000).toISOString().slice(0, 10);
+  };
+  const weeks = [...new Set(datedRows.map(row => weekStartFor(dateForRow(row))))].sort();
   const groups = groupBy(datedRows, key).map(group => {
-    const daily = new Map();
+    const weekly = new Map();
     group.items.filter(bagsKnown).forEach(row => {
       const date = dateForRow(row);
       if (!date) return;
-      const totals = daily.get(date) || { bags: 0, offloadedBags: 0 };
+      const week = weekStartFor(date);
+      const totals = weekly.get(week) || { bags: 0, offloadedBags: 0 };
       totals.bags += row.bags;
       totals.offloadedBags += row.offloadedBags;
-      daily.set(date, totals);
+      weekly.set(week, totals);
     });
-    const eligibleBags = [...daily.values()].reduce((total, value) => total + value.bags, 0);
-    return { name: group.name, daily, eligibleBags };
+    const eligibleBags = [...weekly.values()].reduce((total, value) => total + value.bags, 0);
+    return { name: group.name, weekly, eligibleBags };
   }).filter(group => group.eligibleBags > 0)
     .sort((a, b) => b.eligibleBags - a.eligibleBags || a.name.localeCompare(b.name))
     .slice(0, 5);
 
-  if (!groups.length || !dates.length) {
+  if (!groups.length || !weeks.length) {
     $(target).innerHTML = `<div class="empty-chart">No dated bag data for ${escapeHtml(label.toLowerCase())} trends.</div>`;
     return;
   }
@@ -311,42 +318,42 @@ function drawTrend(rows, key, target, label) {
   const bottom = 40;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const dateNumbers = dates.map(date => Date.parse(`${date}T00:00:00Z`) / 86400000);
-  const dateSpan = dateNumbers[dateNumbers.length - 1] - dateNumbers[0];
-  const x = index => left + (dateSpan === 0 ? plotWidth / 2 : (dateNumbers[index] - dateNumbers[0]) / dateSpan * plotWidth);
+  const weekNumbers = weeks.map(week => Date.parse(`${week}T00:00:00Z`) / 86400000);
+  const weekSpan = weekNumbers[weekNumbers.length - 1] - weekNumbers[0];
+  const x = index => left + (weekSpan === 0 ? plotWidth / 2 : (weekNumbers[index] - weekNumbers[0]) / weekSpan * plotWidth);
   const y = rate => top + (100 - rate) / 100 * plotHeight;
   const colors = ["#14566a", "#20a6a0", "#e27b75", "#8268a8", "#d18b25"];
   const grid = [0, 25, 50, 75, 100].map(rate => {
     const position = y(rate);
     return `<g><line x1="${left}" y1="${position}" x2="${width - right}" y2="${position}" stroke="#e5e9ef"/><text x="${left - 8}" y="${position + 3}" text-anchor="end" fill="#64707d" font-size="10">${rate}%</text></g>`;
   }).join("");
-  const tickIndexes = [...new Set([0, Math.floor((dates.length - 1) / 2), dates.length - 1])];
+  const tickIndexes = [...new Set([0, Math.floor((weeks.length - 1) / 2), weeks.length - 1])];
   const ticks = tickIndexes.map(index => {
-    const date = dates[index];
-    const dateLabel = new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, {
+    const week = weeks[index];
+    const dateLabel = new Date(`${week}T00:00:00Z`).toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
-      year: dateSpan > 365 ? "2-digit" : undefined,
+      year: weekSpan > 365 ? "2-digit" : undefined,
       timeZone: "UTC"
     });
-    return `<text x="${x(index)}" y="${height - 12}" text-anchor="${index === 0 ? "start" : index === dates.length - 1 ? "end" : "middle"}" fill="#64707d" font-size="10"><title>${escapeHtml(date)}</title>${escapeHtml(dateLabel)}</text>`;
+    return `<text x="${x(index)}" y="${height - 12}" text-anchor="${index === 0 ? "start" : index === weeks.length - 1 ? "end" : "middle"}" fill="#64707d" font-size="10"><title>Week of ${escapeHtml(week)}</title>${escapeHtml(dateLabel)}</text>`;
   }).join("");
 
   const series = groups.map((group, groupIndex) => {
-    const points = dates.flatMap((date, index) => {
-      const totals = group.daily.get(date);
+    const points = weeks.flatMap((week, index) => {
+      const totals = group.weekly.get(week);
       if (!totals || !totals.bags) return [];
       const rate = totals.offloadedBags / totals.bags * 100;
-      return [{ date, index, rate, ...totals }];
+      return [{ week, index, rate, ...totals }];
     });
     const path = points.map((point, index) => {
       const previous = points[index - 1];
-      const command = !previous || dateNumbers[point.index] - dateNumbers[previous.index] > 1 ? "M" : "L";
+      const command = !previous || weekNumbers[point.index] - weekNumbers[previous.index] > 7 ? "M" : "L";
       return `${command}${x(point.index).toFixed(1)},${y(point.rate).toFixed(1)}`;
     }).join(" ");
     const color = colors[groupIndex];
     const circles = points.map(point =>
-      `<circle cx="${x(point.index).toFixed(1)}" cy="${y(point.rate).toFixed(1)}" r="3" fill="${color}"><title>${escapeHtml(group.name)} · ${point.date}: ${formatPct(point.rate)} (${numberText(point.offloadedBags)} / ${numberText(point.bags)} bags)</title></circle>`
+      `<circle cx="${x(point.index).toFixed(1)}" cy="${y(point.rate).toFixed(1)}" r="3" fill="${color}"><title>${escapeHtml(group.name)} · Week of ${point.week}: ${formatPct(point.rate)} (${numberText(point.offloadedBags)} / ${numberText(point.bags)} bags)</title></circle>`
     ).join("");
     return `<g><path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${circles}</g>`;
   }).join("");
@@ -355,8 +362,8 @@ function drawTrend(rows, key, target, label) {
   ).join("");
 
   $(target).innerHTML = `<div class="trend-chart">
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Daily bag offload percentage trends for top ${label.toLowerCase()} by eligible bag volume">${grid}${series}${ticks}</svg>
-  </div><div class="trend-legend">${legend}</div><div class="trend-note">Daily offloaded bags ÷ total valid bags. Top five ${escapeHtml(label.toLowerCase())} by eligible bag volume; hover a point for details.</div>`;
+    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Weekly bag offload percentage trends for top ${label.toLowerCase()} by eligible bag volume">${grid}${series}${ticks}</svg>
+  </div><div class="trend-legend">${legend}</div><div class="trend-note">Weekly offloaded bags ÷ total valid bags (Monday–Sunday). Top five ${escapeHtml(label.toLowerCase())} by eligible bag volume; hover a point for details.</div>`;
 }
 
 function displayField(row, key) {
