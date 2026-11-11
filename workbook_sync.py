@@ -8,9 +8,10 @@ import threading
 from collections import OrderedDict
 from datetime import date, datetime, time
 from io import BytesIO
-from urllib.error import URLError
-from urllib.parse import quote, urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlparse, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from zipfile import is_zipfile
 
 from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel, to_excel
@@ -343,24 +344,72 @@ def fetch_workbook(url):
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.netloc:
         raise WorkbookSyncError("WORKBOOK_DOWNLOAD_URL must be an HTTPS download link.")
-    request = Request(url, headers={"User-Agent": "OffloadDashboard/1.0"})
-    try:
-        with urlopen(request, timeout=60) as response:
-            final_url = urlparse(response.geturl())
-            login_hosts = {"login.microsoftonline.com", "login.windows.net", "login.live.com"}
-            if final_url.scheme != "https" or (final_url.hostname or "").lower() in login_hosts:
-                raise WorkbookSyncError("Workbook download requires sign-in; use an anonymous, read-only download link.")
-            content_length = response.headers.get("Content-Length")
-            if content_length and int(content_length) > MAX_WORKBOOK_BYTES:
-                raise WorkbookSyncError("The source workbook exceeds the 30 MB download limit.")
-            content = response.read(MAX_WORKBOOK_BYTES + 1)
-    except WorkbookSyncError:
-        raise
-    except (OSError, URLError, ValueError) as exc:
-        raise WorkbookSyncError("Could not download the workbook; verify the anonymous download link.") from exc
-    if len(content) > MAX_WORKBOOK_BYTES:
-        raise WorkbookSyncError("The source workbook exceeds the 30 MB download limit.")
-    return content
+    parts = urlsplit(url)
+    download_match = re.search(r"(^|&)download=[^&]*", parts.query, flags=re.IGNORECASE)
+    if download_match:
+        download_query = (
+            f"{parts.query[:download_match.start()]}"
+            f"{download_match.group(1)}download=1"
+            f"{parts.query[download_match.end():]}"
+        )
+    else:
+        separator = "&" if parts.query else ""
+        download_query = f"{parts.query}{separator}download=1"
+    download_url = urlunsplit((
+        parts.scheme, parts.netloc, parts.path, download_query, parts.fragment,
+    ))
+    candidates = list(dict.fromkeys((download_url, url)))
+    login_hosts = {"login.microsoftonline.com", "login.windows.net", "login.live.com"}
+    failures = []
+
+    for candidate in candidates:
+        request = Request(candidate, headers={
+            "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/octet-stream, */*",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+        })
+        try:
+            with urlopen(request, timeout=60) as response:
+                final_url = urlparse(response.geturl())
+                if final_url.scheme != "https" or (final_url.hostname or "").lower() in login_hosts:
+                    failures.append("sign-in redirect")
+                    continue
+                content_length = response.headers.get("Content-Length")
+                if content_length and int(content_length) > MAX_WORKBOOK_BYTES:
+                    raise WorkbookSyncError("The source workbook exceeds the 30 MB download limit.")
+                content = response.read(MAX_WORKBOOK_BYTES + 1)
+                if len(content) > MAX_WORKBOOK_BYTES:
+                    raise WorkbookSyncError("The source workbook exceeds the 30 MB download limit.")
+                if is_zipfile(BytesIO(content)):
+                    return content
+                failures.append("non-Excel response")
+        except WorkbookSyncError:
+            raise
+        except HTTPError as exc:
+            failures.append(f"HTTP {exc.code}")
+        except (OSError, URLError, ValueError):
+            failures.append("connection failure")
+
+    if "sign-in redirect" in failures:
+        raise WorkbookSyncError(
+            "The workbook link redirected the dashboard to Microsoft sign-in. "
+            "Set WORKBOOK_DOWNLOAD_URL to the exact Anyone link that downloads the file in a private window."
+        )
+    http_errors = sorted({failure for failure in failures if failure.startswith("HTTP ")})
+    if http_errors:
+        raise WorkbookSyncError(
+            f"The workbook server rejected the dashboard request ({', '.join(http_errors)}). "
+            "Verify that WORKBOOK_DOWNLOAD_URL is the Anyone link and that its access has not expired."
+        )
+    if "non-Excel response" in failures:
+        raise WorkbookSyncError(
+            "The workbook link returned a web page instead of an Excel file. "
+            "Verify that WORKBOOK_DOWNLOAD_URL is a direct download link."
+        )
+    raise WorkbookSyncError("Could not connect to the workbook download link.")
 
 
 class _GraphRedirectHandler(HTTPRedirectHandler):

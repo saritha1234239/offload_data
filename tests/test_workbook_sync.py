@@ -126,10 +126,61 @@ class WorkbookSyncTests(unittest.TestCase):
             def geturl(self):
                 return "https://login.microsoftonline.com/tenant/signin?token=private"
 
-        with patch("workbook_sync.urlopen", return_value=RedirectResponse(b"sign-in page")):
-            with self.assertRaisesRegex(WorkbookSyncError, "requires sign-in") as raised:
+        with patch(
+            "workbook_sync.urlopen",
+            side_effect=lambda *_args, **_kwargs: RedirectResponse(b"sign-in page"),
+        ):
+            with self.assertRaisesRegex(WorkbookSyncError, "redirected the dashboard to Microsoft sign-in") as raised:
                 fetch_workbook("https://example.test/shared.xlsx")
-        self.assertNotIn("private", str(raised.exception))
+        self.assertNotIn("token=private", str(raised.exception))
+
+    def test_public_share_link_uses_direct_download_and_accepts_only_excel_content(self):
+        class WorkbookResponse(BytesIO):
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.close()
+
+            def geturl(self):
+                return "https://example.test/download/workbook.xlsx"
+
+        requests = []
+
+        def open_request(request, timeout):
+            requests.append(request)
+            return WorkbookResponse(workbook_fixture())
+
+        with patch("workbook_sync.urlopen", side_effect=open_request):
+            content = fetch_workbook("https://example.test/shared.xlsx?e=public")
+
+        self.assertEqual(content, workbook_fixture())
+        self.assertEqual(len(requests), 1)
+        self.assertIn("e=public", requests[0].full_url)
+        self.assertIn("download=1", requests[0].full_url)
+        self.assertIn("Mozilla/5.0", requests[0].get_header("User-agent"))
+
+    def test_web_page_response_is_reported_as_not_a_workbook(self):
+        class WebPageResponse(BytesIO):
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.close()
+
+            def geturl(self):
+                return "https://example.test/shared.xlsx"
+
+        with patch(
+            "workbook_sync.urlopen",
+            side_effect=lambda *_args, **_kwargs: WebPageResponse(b"<html>Sign in</html>"),
+        ):
+            with self.assertRaisesRegex(WorkbookSyncError, "web page instead of an Excel file"):
+                fetch_workbook("https://example.test/shared.xlsx")
 
     def test_graph_download_uses_bearer_token_and_file_scoped_endpoint(self):
             class FakeApplication:

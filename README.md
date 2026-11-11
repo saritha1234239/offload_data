@@ -1,18 +1,31 @@
 # Offload Performance Dashboard
 
-## Automatically sync the existing private workbook
+## Automatically sync the workbook
 
-The Render service supports Microsoft Graph app-only access to the existing
-workbook. It downloads the workbook into memory, reads only the four dashboard
-tabs, and updates `workbook-data.js` every five minutes by default. Open dashboard
-tabs reload changed data at most one minute later. Graph credentials stay in
-Render's environment and are never returned by `/api/health`.
+Render can download the workbook from a SharePoint/OneDrive **Anyone** link,
+without Microsoft sign-in. It tries the link as a direct download first, then
+the original URL, and only accepts a valid Excel workbook response. It reads the
+four dashboard tabs and refreshes `workbook-data.js` every five minutes by
+default. Open dashboard tabs reload changed data at most one minute later. A
+failed refresh keeps the last successful data.
 
-The SharePoint link used for the workbook is private and redirects unauthenticated
-requests to Microsoft sign-in. Render cannot use a browser session or a person's
-password for scheduled access. A Microsoft 365 administrator must approve an
-application, and the workbook owner or administrator must grant that app read
-access to this file.
+To configure the public link, copy the workbook's **Anyone with the link** URL
+from SharePoint/OneDrive and set it as `WORKBOOK_DOWNLOAD_URL` in the Render
+service environment. Use the actual sharing link, not a document path that only
+works from a signed-in browser. Check the link in a private window before saving
+it in Render. The link can grant access to the entire workbook, including tabs
+the dashboard does not use; only enable it if that access is approved.
+
+`/api/health` reports whether sync is configured, when it last succeeded, and a
+sanitized download error without exposing the configured URL.
+
+### Microsoft Graph alternative
+
+If public workbook access is not approved, the Render service also supports
+Microsoft Graph app-only access to the existing workbook. Graph credentials stay
+in Render's environment and are never returned by `/api/health`. A Microsoft
+365 administrator must approve an application, and the workbook owner or
+administrator must grant that app read access to this file.
 
 ### Microsoft 365 administrator setup
 
