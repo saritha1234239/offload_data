@@ -2,17 +2,21 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from urllib.request import Request
+from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from unittest.mock import patch
 
 from openpyxl import Workbook
 
 import web_server
+import sync_workbook_to_dashboard as local_sync
 from workbook_sync import (
     WorkbookAutoSync,
     WorkbookSyncError,
@@ -55,6 +59,14 @@ def workbook_fixture():
 
 
 class WorkbookSyncTests(unittest.TestCase):
+    def _start_upload_server(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), web_server.DashboardHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_port}"
+
     def test_parses_all_regions_skips_duplicate_headers_and_resolves_ambiguous_dates(self):
         data = parse_workbook(workbook_fixture())
         self.assertEqual(len(data["records"]), 8)
@@ -181,6 +193,122 @@ class WorkbookSyncTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(WorkbookSyncError, "web page instead of an Excel file"):
                 fetch_workbook("https://example.test/shared.xlsx")
+
+    def test_authenticated_local_upload_refreshes_dashboard_data_and_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data_path = Path(directory) / "workbook-data.js"
+            sync = WorkbookAutoSync("", str(data_path), 300, source="local_upload")
+            with (
+                patch.object(web_server, "UPLOAD_TOKEN", "test-upload-token-value-at-least-32"),
+                patch.object(web_server, "UPLOAD_TOKEN_CONFIGURED", True),
+                patch.object(web_server, "DATA_PATH", str(data_path)),
+                patch.object(web_server, "WORKBOOK_AUTO_SYNC", sync),
+            ):
+                server_url = self._start_upload_server()
+                request = Request(
+                    f"{server_url}/api/upload",
+                    data=workbook_fixture(),
+                    headers={
+                        "Authorization": "Bearer test-upload-token-value-at-least-32",
+                        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    },
+                    method="POST",
+                )
+                with urlopen(request, timeout=5) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                with urlopen(f"{server_url}/api/health", timeout=5) as response:
+                    health = json.loads(response.read().decode("utf-8"))
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["rows"], 8)
+            self.assertIn("window.offloadWorkbookRecords", data_path.read_text(encoding="utf-8"))
+            self.assertEqual(health["workbookAutoSync"]["source"], "local_upload")
+            self.assertEqual(health["workbookAutoSync"]["rows"], 8)
+            self.assertIsNotNone(health["workbookAutoSync"]["lastSuccessAt"])
+            self.assertTrue(health["workbookUpload"]["enabled"])
+
+    def test_local_upload_rejects_bad_token_and_invalid_workbook_without_replacing_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data_path = Path(directory) / "workbook-data.js"
+            data_path.write_text("last-good", encoding="utf-8")
+            sync = WorkbookAutoSync("", str(data_path), 300, source="local_upload")
+            with (
+                patch.object(web_server, "UPLOAD_TOKEN", "test-upload-token-value-at-least-32"),
+                patch.object(web_server, "UPLOAD_TOKEN_CONFIGURED", True),
+                patch.object(web_server, "DATA_PATH", str(data_path)),
+                patch.object(web_server, "WORKBOOK_AUTO_SYNC", sync),
+            ):
+                server_url = self._start_upload_server()
+                bad_token_request = Request(
+                    f"{server_url}/api/upload",
+                    data=workbook_fixture(),
+                    headers={
+                        "Authorization": "Bearer wrong-token",
+                        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    },
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as unauthorized:
+                    urlopen(bad_token_request, timeout=5)
+                self.assertEqual(unauthorized.exception.code, 401)
+
+                invalid_workbook_request = Request(
+                    f"{server_url}/api/upload",
+                    data=b"not an Excel workbook",
+                    headers={
+                        "Authorization": "Bearer test-upload-token-value-at-least-32",
+                        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    },
+                    method="POST",
+                )
+                with self.assertRaises(HTTPError) as invalid_workbook:
+                    urlopen(invalid_workbook_request, timeout=5)
+                self.assertEqual(invalid_workbook.exception.code, 400)
+
+            self.assertEqual(data_path.read_text(encoding="utf-8"), "last-good")
+
+    def test_local_sync_configuration_performs_an_authenticated_upload(self):
+        class UploadResponse(BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                self.close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            workbook_path = Path(directory) / "tracker.xlsx"
+            workbook_path.write_bytes(workbook_fixture())
+            config_path = Path(directory) / "sync-config.json"
+            requests = []
+
+            def open_request(request, timeout):
+                requests.append(request)
+                return UploadResponse(json.dumps({
+                    "ok": True,
+                    "rows": 8,
+                    "version": "a" * 64,
+                }).encode("utf-8"))
+
+            with (
+                patch.object(local_sync, "CONFIG_DIRECTORY", Path(directory)),
+                patch.object(local_sync, "CONFIG_PATH", config_path),
+                patch(
+                    "sync_workbook_to_dashboard.getpass.getpass",
+                    side_effect=["test-upload-token-value-at-least-32"] * 2,
+                ),
+                patch("sync_workbook_to_dashboard.urlopen", side_effect=open_request),
+            ):
+                local_sync.configure(workbook_path, "https://dashboard.example.test/api/upload")
+                local_sync.sync_once()
+
+            self.assertEqual(len(requests), 1)
+            self.assertEqual(
+                requests[0].get_header("Authorization"),
+                "Bearer test-upload-token-value-at-least-32",
+            )
+            self.assertEqual(requests[0].data, workbook_fixture())
+            saved_config = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved_config["workbookPath"], str(workbook_path.resolve()))
 
     def test_graph_download_uses_bearer_token_and_file_scoped_endpoint(self):
             class FakeApplication:

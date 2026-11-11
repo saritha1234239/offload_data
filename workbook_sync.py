@@ -550,6 +550,13 @@ class WorkbookAutoSync:
                 "rows": self._last_rows,
             }
 
+    def record_external_refresh(self, result):
+        with self._status_lock:
+            self._last_success_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            self._last_error = None
+            self._last_version = result["version"]
+            self._last_rows = result["rows"]
+
     def refresh_once(self):
         if not self.configured:
             raise WorkbookSyncError(
@@ -590,6 +597,8 @@ class WorkbookAutoSync:
         if not self.configured:
             if self.configuration_error:
                 print(f"Workbook auto-sync is disabled. {self.configuration_error}")
+            elif self.source == "local_upload":
+                print("Workbook auto-sync is waiting for authenticated local uploads.")
             else:
                 print("Workbook auto-sync is disabled; configure Microsoft Graph or WORKBOOK_DOWNLOAD_URL.")
             return

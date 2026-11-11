@@ -1,3 +1,4 @@
+import hmac
 import json
 import os
 import socket
@@ -5,13 +6,22 @@ import subprocess
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
 
-from workbook_sync import WorkbookAutoSync, WorkbookSyncError, fetch_graph_workbook
+from workbook_sync import (
+    MAX_WORKBOOK_BYTES,
+    WorkbookAutoSync,
+    WorkbookSyncError,
+    fetch_graph_workbook,
+    refresh_from_bytes,
+)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_WORKBOOK_PATH = "https://criticalogindia-my.sharepoint.com/personal/saptarshi_maji_criticalog_com/Documents/Desktop/Midmile%20Management/LH%20performance%20tracker.xlsx?web=1"
 DATA_PATH = os.path.join(BASE_DIR, "workbook-data.js")
 WORKBOOK_REFRESH_SECONDS = int(os.environ.get("WORKBOOK_REFRESH_SECONDS", "300"))
+UPLOAD_TOKEN = os.environ.get("DASHBOARD_UPLOAD_TOKEN", "")
+UPLOAD_TOKEN_CONFIGURED = len(UPLOAD_TOKEN) >= 32
 
 
 def create_workbook_sync():
@@ -60,6 +70,14 @@ def create_workbook_sync():
             source="microsoft_graph",
         )
 
+    if UPLOAD_TOKEN_CONFIGURED:
+        return WorkbookAutoSync(
+            "",
+            DATA_PATH,
+            WORKBOOK_REFRESH_SECONDS,
+            source="local_upload",
+        )
+
     return WorkbookAutoSync(
         os.environ.get("WORKBOOK_DOWNLOAD_URL", ""),
         DATA_PATH,
@@ -95,6 +113,7 @@ def resolve_workbook_path():
 WORKBOOK_PATH = resolve_workbook_path()
 PORT = int(os.environ.get("PORT", "8000"))
 HOST = os.environ.get("HOST", "0.0.0.0")
+UPLOAD_LOCK = threading.Lock()
 
 
 def run_workbook_refresh(workbook_path=None):
@@ -160,6 +179,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 "status": "ok",
                 "port": PORT,
                 "workbookAutoSync": WORKBOOK_AUTO_SYNC.status(),
+                "workbookUpload": {
+                    "enabled": UPLOAD_TOKEN_CONFIGURED,
+                    "endpoint": "/api/upload",
+                },
             }
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -169,7 +192,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
 
         if self.path.startswith("/api/refresh"):
-            if WORKBOOK_AUTO_SYNC.configured and os.name != "nt":
+            if UPLOAD_TOKEN_CONFIGURED:
+                result = {
+                    "ok": False,
+                    "returnCode": 405,
+                    "output": "This service is updated by authenticated local workbook uploads.",
+                }
+            elif WORKBOOK_AUTO_SYNC.configured and os.name != "nt":
                 result = {
                     "ok": False,
                     "returnCode": 405,
@@ -191,6 +220,70 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self.path = f"{self.path}{cache_bust}"
 
         return super().do_GET()
+
+    def do_POST(self):
+        if urlsplit(self.path).path != "/api/upload":
+            self.send_error(404)
+            return
+        if not UPLOAD_TOKEN_CONFIGURED:
+            self._send_json(503, {
+                "ok": False,
+                "error": "Set DASHBOARD_UPLOAD_TOKEN to a secret at least 32 characters long.",
+            })
+            return
+        authorization = self.headers.get("Authorization", "")
+        if not hmac.compare_digest(
+            authorization.encode("utf-8"),
+            f"Bearer {UPLOAD_TOKEN}".encode("utf-8"),
+        ):
+            self._send_json(401, {"ok": False, "error": "Invalid upload authorization."})
+            return
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type not in {
+            "application/octet-stream",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }:
+            self._send_json(415, {"ok": False, "error": "Upload must contain an Excel workbook."})
+            return
+        try:
+            content_length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self._send_json(411, {"ok": False, "error": "Content-Length is required."})
+            return
+        if content_length <= 0:
+            self._send_json(400, {"ok": False, "error": "Upload is empty."})
+            return
+        if content_length > MAX_WORKBOOK_BYTES:
+            self._send_json(413, {"ok": False, "error": "The workbook exceeds the 30 MB upload limit."})
+            return
+
+        try:
+            workbook_bytes = self.rfile.read(content_length)
+            if len(workbook_bytes) != content_length:
+                self._send_json(400, {"ok": False, "error": "The workbook upload was incomplete."})
+                return
+            with UPLOAD_LOCK:
+                result = refresh_from_bytes(workbook_bytes, DATA_PATH)
+                WORKBOOK_AUTO_SYNC.record_external_refresh(result)
+        except WorkbookSyncError as exc:
+            self._send_json(400, {"ok": False, "error": str(exc)})
+            return
+        except OSError:
+            self._send_json(500, {"ok": False, "error": "Could not save the refreshed workbook data."})
+            return
+
+        self._send_json(200, {"ok": True, **result})
+
+    def _send_json(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
 
     def log_message(self, format, *args):
         print(f"[web] {self.address_string()} {format % args}")
@@ -215,7 +308,10 @@ if __name__ == "__main__":
         except Exception as exc:
             print(f"Initial refresh warning: {exc}")
     else:
-        print("Serving the bundled workbook-data.js snapshot until workbook auto-sync succeeds.")
+        if UPLOAD_TOKEN_CONFIGURED:
+            print("Serving the bundled snapshot until an authenticated local workbook upload arrives.")
+        else:
+            print("Serving the bundled workbook-data.js snapshot until workbook auto-sync succeeds.")
 
     httpd = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
     WORKBOOK_AUTO_SYNC.start()

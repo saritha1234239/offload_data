@@ -2,12 +2,14 @@
 
 ## Automatically sync the workbook
 
-Render can download the workbook from a SharePoint/OneDrive **Anyone** link,
-without Microsoft sign-in. It tries the link as a direct download first, then
-the original URL, and only accepts a valid Excel workbook response. It reads the
-four dashboard tabs and refreshes `workbook-data.js` every five minutes by
-default. Open dashboard tabs reload changed data at most one minute later. A
-failed refresh keeps the last successful data.
+Render can download a SharePoint/OneDrive **Anyone** link without Microsoft
+sign-in only when the link returns the raw Excel file to server requests. The
+downloader tries direct-download mode first, then the original URL, and accepts
+only a valid Excel workbook response. Some SharePoint links work in a private
+browser window but still redirect server requests to sign-in. In that case, use
+the local-computer upload method below. Scheduled server refresh, when available,
+runs every five minutes by default, and open dashboard tabs reload changed data
+at most one minute later. Failed refreshes keep the last successful data.
 
 To configure the public link, copy the workbook's **Anyone with the link** URL
 from SharePoint/OneDrive and set it as `WORKBOOK_DOWNLOAD_URL` in the Render
@@ -93,3 +95,53 @@ If authentication, permission, download, or workbook validation fails, the servi
 keeps serving the last successful snapshot. The dashboard itself remains public;
 its shipment records can be viewed by anyone with the dashboard URL. Only configure
 it if that data is approved for public access.
+
+## Sync from a computer that can access the workbook
+
+If Render cannot download the SharePoint link, a Windows computer with the
+workbook available locally can push validated workbook data to Render. For
+automatic updates, use a OneDrive-synced copy of the workbook. A one-time
+download will not change when the source workbook is edited; it must be replaced
+manually unless OneDrive keeps that local copy synchronized. The computer must
+be signed in, online, and have the workbook available for scheduled uploads.
+
+1. In Render, set `DASHBOARD_UPLOAD_TOKEN` to a new, random secret of at least
+   32 characters. For
+   example, generate one locally with:
+
+   ```powershell
+   & .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+   Paste the generated value directly into Render's environment setting. Do not
+   commit it or send it in chat. Save the setting and wait for deployment.
+2. In a terminal on the Windows computer, configure the local workbook path.
+   The token is entered with hidden input and saved in the current user's local
+   application-data folder, not in this repository:
+
+   ```powershell
+   & .\.venv\Scripts\python.exe .\sync_workbook_to_dashboard.py --configure --workbook "C:\path\to\the\synced\workbook.xlsx"
+   ```
+
+   Configuration also performs an initial upload. The workbook must contain the
+   four expected dashboard sheets. The local configuration file contains the
+   upload token; keep the Windows user account private and do not share that file.
+3. If the initial upload succeeds, install the five-minute scheduled task:
+
+   ```powershell
+   & .\.venv\Scripts\python.exe .\sync_workbook_to_dashboard.py --install-task
+   ```
+
+   The task runs every five minutes while that Windows user is signed in. To
+   upload once manually, run `sync_workbook_to_dashboard.py --sync`. To stop
+   scheduled uploads, run `sync_workbook_to_dashboard.py --remove-task`.
+4. Check `https://offload-dashboard.onrender.com/api/health`. A successful push
+   updates `workbookAutoSync.lastSuccessAt`, `rows`, and `version`; the
+   `workbookUpload.enabled` field indicates whether the protected endpoint is
+   configured.
+
+The upload endpoint accepts only HTTPS requests with the configured bearer token,
+limits workbook uploads to 30 MB, validates the workbook before replacing the
+dashboard data, and keeps the previous data if validation fails. Once local
+uploads are working, remove `WORKBOOK_DOWNLOAD_URL` from Render if it is no
+longer needed. Anyone with the dashboard URL can see the published shipment data.
