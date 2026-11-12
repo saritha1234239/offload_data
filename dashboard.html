@@ -42,7 +42,6 @@
     .quick-btn { border: 1px solid #c9c9c2; border-radius: 999px; background: #fff; padding: 6px 4px; color: #222; font-size: 10px; white-space: nowrap; }
     .quick-btn:hover { border-color: #9abbe1; }
     .quick-btn.active { border-color: var(--blue); background: var(--pale-blue); color: var(--navy); font-weight: 700; box-shadow: inset 0 0 0 1px var(--blue); }
-    .trends-filter { font-size: 10px; height: 33px; padding: 0 12px; }
     .select-wrap { display: flex; align-items: center; }
     .select-wrap label { display:none; }
     select { height: 33px; min-width: 92px; border: 1px solid #c9c9c2; border-radius: 7px; padding: 0 22px 0 8px; color: #222; background: #fff; font-size: 10px; }
@@ -72,22 +71,12 @@
     .panel-subtitle, .footer-note, .metric-caption { display: none; }
     .chart { min-height: 148px; }
     .empty-chart { color: var(--muted); display: grid; place-items: center; height: 180px; font-size: 13px; }
-    .trend-chart { width: 100%; overflow: hidden; }
-    .trend-chart svg { display: block; width: 100%; height: 260px; overflow: visible; }
-    .trend-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
-    .trend-legend-item { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #4f5b68; font-size: 10px; }
-    .trend-legend-item i { width: 9px; height: 9px; flex: 0 0 9px; border-radius: 50%; background: var(--trend-color); }
-    .trend-note { margin-top: 8px; color: var(--muted); font-size: 10px; }
-    body.trends-only .page > .legend,
-    body.trends-only #metrics,
-    body.trends-only .grid > section { display: none; }
-
     .table-head, .bar-row { display: grid; align-items: center; gap: 12px; }
     .table-head { color: #555; font-size: 10px; font-weight: 650; padding: 0 0 6px; }
     .bar-row { min-height: 29px; font-size: 11px; }
-    .bar-row.selectable, .week { cursor: pointer; }
+    .bar-row.selectable { cursor: pointer; }
     .bar-row.selectable:hover { background: #e8f7f5; }
-    .bar-row.selectable:focus-visible, .week:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+    .bar-row.selectable:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
     .region-layout { grid-template-columns: minmax(85px, 1fr) minmax(120px, 3fr) 44px 82px 92px; }
     .lane-layout { grid-template-columns: minmax(85px, 1fr) minmax(130px, 4fr) 45px 105px 92px; }
     .airline-layout { grid-template-columns: minmax(90px, 1fr) minmax(130px, 4fr) 44px 98px 92px; }
@@ -189,7 +178,6 @@
           <button class="quick-btn" data-range="30">Last 30 days</button>
           <button class="quick-btn" data-range="month">This month</button>
           <button class="quick-btn" data-range="all">All dates</button>
-          <button class="quick-btn trends-filter" id="trendsFilter" type="button" aria-expanded="false" aria-controls="trendPanels">Trends</button>
         </div>
       </div>
       <div class="filter-row secondary">
@@ -232,22 +220,6 @@
         <div id="reasonChart"></div>
         <div class="reason-summary" id="reasonSummary"></div>
       </section>
-
-      <div id="trendPanels" hidden>
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Lane bag offload % trends</h2>
-          </div>
-          <div id="laneTrendChart"></div>
-        </section>
-
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Vendor bag offload % trends</h2>
-          </div>
-          <div id="vendorTrendChart"></div>
-        </section>
-      </div>
 
       <section class="panel">
         <div class="panel-header">

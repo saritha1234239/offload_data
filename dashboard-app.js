@@ -278,93 +278,6 @@ function drawRanked(rows, key, target, label, layout) {
     makeBarInteractive(element, groups[index].name, groups[index].items));
 }
 
-function drawTrend(rows, key, target, label) {
-  const weekStartFor = date => {
-    const dateNumber = Date.parse(`${date}T00:00:00Z`);
-    const dayOfWeek = new Date(dateNumber).getUTCDay();
-    const daysSinceMonday = (dayOfWeek + 6) % 7;
-    return new Date(dateNumber - daysSinceMonday * 86400000).toISOString().slice(0, 10);
-  };
-  const validDatedRows = rows.filter(row => isShipment(row) && bagsKnown(row) && row.bags > 0 && dateForRow(row));
-  const weeks = [...new Set(validDatedRows.map(row => weekStartFor(dateForRow(row))))].sort();
-  const groups = groupBy(validDatedRows, key).map(group => {
-    const weekly = new Map();
-    group.items.forEach(row => {
-      const date = dateForRow(row);
-      const week = weekStartFor(date);
-      const totals = weekly.get(week) || { bags: 0, offloadedBags: 0 };
-      totals.bags += row.bags;
-      totals.offloadedBags += row.offloadedBags;
-      weekly.set(week, totals);
-    });
-    const eligibleBags = [...weekly.values()].reduce((total, value) => total + value.bags, 0);
-    return { name: group.name, weekly, eligibleBags };
-  }).filter(group => group.eligibleBags > 0)
-    .sort((a, b) => b.eligibleBags - a.eligibleBags || a.name.localeCompare(b.name))
-    .slice(0, 5);
-
-  if (!groups.length || !weeks.length) {
-    $(target).innerHTML = `<div class="empty-chart">No dated bag data for ${escapeHtml(label.toLowerCase())} trends.</div>`;
-    return;
-  }
-
-  const width = 900;
-  const height = 260;
-  const left = 44;
-  const right = 18;
-  const top = 14;
-  const bottom = 40;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
-  const weekNumbers = weeks.map(week => Date.parse(`${week}T00:00:00Z`) / 86400000);
-  const weekSpan = weekNumbers[weekNumbers.length - 1] - weekNumbers[0];
-  const crossesCalendarYears = new Set(weeks.map(week => week.slice(0, 4))).size > 1;
-  const x = index => left + (weekSpan === 0 ? plotWidth / 2 : (weekNumbers[index] - weekNumbers[0]) / weekSpan * plotWidth);
-  const y = rate => top + (100 - rate) / 100 * plotHeight;
-  const colors = ["#14566a", "#20a6a0", "#e27b75", "#8268a8", "#d18b25"];
-  const grid = [0, 25, 50, 75, 100].map(rate => {
-    const position = y(rate);
-    return `<g><line x1="${left}" y1="${position}" x2="${width - right}" y2="${position}" stroke="#e5e9ef"/><text x="${left - 8}" y="${position + 3}" text-anchor="end" fill="#64707d" font-size="10">${rate}%</text></g>`;
-  }).join("");
-  const tickIndexes = [...new Set([0, Math.floor((weeks.length - 1) / 2), weeks.length - 1])];
-  const ticks = tickIndexes.map(index => {
-    const week = weeks[index];
-    const dateLabel = new Date(`${week}T00:00:00Z`).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: weekSpan > 365 || crossesCalendarYears ? "2-digit" : undefined,
-      timeZone: "UTC"
-    });
-    return `<text x="${x(index)}" y="${height - 12}" text-anchor="${index === 0 ? "start" : index === weeks.length - 1 ? "end" : "middle"}" fill="#64707d" font-size="10"><title>Week of ${escapeHtml(week)}</title>${escapeHtml(dateLabel)}</text>`;
-  }).join("");
-
-  const series = groups.map((group, groupIndex) => {
-    const points = weeks.flatMap((week, index) => {
-      const totals = group.weekly.get(week);
-      if (!totals || !totals.bags) return [];
-      const rate = totals.offloadedBags / totals.bags * 100;
-      return [{ week, index, rate, ...totals }];
-    });
-    const path = points.map((point, index) => {
-      const previous = points[index - 1];
-      const command = !previous || weekNumbers[point.index] - weekNumbers[previous.index] > 7 ? "M" : "L";
-      return `${command}${x(point.index).toFixed(1)},${y(point.rate).toFixed(1)}`;
-    }).join(" ");
-    const color = colors[groupIndex];
-    const circles = points.map(point =>
-      `<circle cx="${x(point.index).toFixed(1)}" cy="${y(point.rate).toFixed(1)}" r="3" fill="${color}"><title>${escapeHtml(group.name)} · Week of ${point.week}: ${formatPct(point.rate)} (${numberText(point.offloadedBags)} / ${numberText(point.bags)} bags)</title></circle>`
-    ).join("");
-    return `<g><path d="${path}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${circles}</g>`;
-  }).join("");
-  const legend = groups.map((group, index) =>
-    `<span class="trend-legend-item"><i style="--trend-color:${colors[index]}"></i>${escapeHtml(group.name)}</span>`
-  ).join("");
-
-  $(target).innerHTML = `<div class="trend-chart">
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Weekly bag offload percentage trends for top ${label.toLowerCase()} by eligible bag volume">${grid}${series}${ticks}</svg>
-  </div><div class="trend-legend">${legend}</div><div class="trend-note">Weekly rate = summed offloaded bags ÷ summed total bags, using valid positive bag totals (Monday–Sunday). Weeks at date-filter boundaries use only the selected dates. Top five ${escapeHtml(label.toLowerCase())} by eligible bag volume; hover a point for details.</div>`;
-}
-
 function displayField(row, key) {
   if (key.startsWith("raw_")) return row.sourceValues?.[key] ?? "";
   if (key === "date") return dateForRow(row);
@@ -441,8 +354,6 @@ function render() {
   drawMetrics(rows);
   drawRegion(rows);
   drawRemarks(rows);
-  drawTrend(rows, "lane", "laneTrendChart", "lanes");
-  drawTrend(rows, "vendor", "vendorTrendChart", "vendors");
   drawRanked(rows, "lane", "laneChart", "Lane", "lane-layout");
   drawRanked(rows, "vendor", "vendorChart", "Vendor", "airline-layout");
 }
@@ -564,14 +475,6 @@ function refreshQuickFilterIfNeeded() {
 
 document.querySelectorAll(".quick-btn[data-range]").forEach(button =>
   button.addEventListener("click", () => applyRange(button.dataset.range)));
-$("trendsFilter").addEventListener("click", () => {
-  const isExpanded = $("trendsFilter").getAttribute("aria-expanded") === "true";
-  $("trendPanels").hidden = isExpanded;
-  document.body.classList.toggle("trends-only", !isExpanded);
-  $("trendsFilter").setAttribute("aria-expanded", String(!isExpanded));
-  $("trendsFilter").classList.toggle("active", !isExpanded);
-  $("trendsFilter").textContent = isExpanded ? "Trends" : "Dashboard";
-});
 ["startDate", "endDate", "regionFilter", "vendorFilter", "laneFilter", "originFilter", "flightFilter"].forEach(id => {
   $(id).addEventListener("change", () => {
     document.querySelectorAll(".quick-btn[data-range]").forEach(button => button.classList.remove("active"));
