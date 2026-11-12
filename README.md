@@ -145,3 +145,49 @@ limits workbook uploads to 30 MB, validates the workbook before replacing the
 dashboard data, and keeps the previous data if validation fails. Once local
 uploads are working, remove `WORKBOOK_DOWNLOAD_URL` from Render if it is no
 longer needed. Anyone with the dashboard URL can see the published shipment data.
+
+## Daily dashboard snapshot
+
+The [GitHub Actions workflow](./.github/workflows/daily-dashboard-snapshot.yml)
+runs at `09:00 UTC` (`2:30 PM` in India). GitHub-hosted runners use UTC for
+scheduled workflows, and GitHub may delay a scheduled run during periods of
+high load; delivery is not guaranteed to start at the exact minute. This avoids
+adding a Render Cron service.
+
+The workflow opens the hosted dashboard with Playwright, captures a full-page
+PNG, and emails it to BCC recipients using the company SMTP relay. These are
+SMTP settings, not Email API credentials. Keep all credentials in GitHub
+repository secrets, never in the repository or chat.
+
+In the repository, open **Settings → Secrets and variables → Actions** and add
+these **repository secrets**:
+
+| Secret | Value |
+| --- | --- |
+| `SMTP_HOST` | Company-approved relay hostname |
+| `SMTP_USERNAME` | SMTP username |
+| `SMTP_PASSWORD` | SMTP password |
+| `EMAIL_RECIPIENTS` | Comma-separated authorized email addresses |
+
+Add these **repository variables** on the **Variables** tab:
+
+| Variable | Value |
+| --- | --- |
+| `DASHBOARD_EMAIL_ENABLED` | `true` after all required secrets are configured |
+| `EMAIL_FROM` | An address approved by IT (defaults to `saritha.m@criticalog.com` if unset) |
+| `SMTP_PORT` | `587` for STARTTLS, or `465` for implicit TLS; defaults to `587` |
+| `SMTP_STARTTLS` | `true` for port 587; defaults to `true` |
+
+The workflow is disabled until `DASHBOARD_EMAIL_ENABLED` is set to `true`.
+After adding the settings, go to **Actions → Daily dashboard snapshot →
+Run workflow** to test it. The message contains the PNG inline and hides the
+recipient list. Check the run log for delivery status.
+
+Ask IT to confirm the relay accepts connections from GitHub-hosted runners.
+Hosted runner IP ranges can change, so IP-allowlist-only relays may not work
+reliably; do not put SMTP credentials in workflow code.
+
+WhatsApp remains optional and disabled if no WhatsApp settings are added. To
+enable it later, configure the previously documented Cloud API values as
+repository secrets and set `WHATSAPP_RECIPIENTS_OPTED_IN=true` only after all
+recipients have opted in. The Meta-approved template must have an image header.
