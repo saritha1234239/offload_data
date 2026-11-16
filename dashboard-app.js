@@ -40,7 +40,7 @@ const formatPct = value => `${value.toFixed(1)}%`;
 const sum = (rows, key) => rows.reduce((total, row) => total + (Number.isFinite(row[key]) ? row[key] : 0), 0);
 const count = (rows, predicate) => rows.filter(predicate).length;
 const watchlistPeriodCount = 4;
-const watchlistWindowDays = 30;
+const watchlistWindowDays = 28;
 const watchlistMinimumBags = 20;
 const isShipment = row => row.recordType === "Shipment";
 const hasBagValues = row => Number.isFinite(row.bags) && Number.isFinite(row.offloadedBags);
@@ -351,8 +351,8 @@ function drawConsistentUnderperformers(key, target, label, start, end) {
 
   const element = $(target);
   element.innerHTML = qualifying.length
-    ? `<div class="table-head watchlist-layout"><span>${label}</span><span class="count">Offload % (30 days)</span><span class="count">Weeks below avg.</span><span class="count">Bags counted</span></div>` +
-      qualifying.map(group => `<div class="bar-row watchlist-layout" title="${escapeHtml(group.name)}: ${formatPct(group.rate)} over the last 30 days; below the network average in ${group.poorPeriods} of 4 periods">
+    ? `<div class="table-head watchlist-layout"><span>${label}</span><span class="count">Offload % (4 weeks)</span><span class="count">Weeks below avg.</span><span class="count">Bags counted</span></div>` +
+      qualifying.map(group => `<div class="bar-row watchlist-layout" title="${escapeHtml(group.name)}: ${formatPct(group.rate)} over the last 4 weeks; below the network average in ${group.poorPeriods} of 4 weeks">
         <span class="bar-label">${escapeHtml(group.name)}</span><span class="count">${formatPct(group.rate)}</span><span class="count">${group.poorPeriods}/4</span><span class="count">${numberText(group.eligibleBags)}</span></div>`).join("")
     : `<div class="empty-chart">No ${label.toLowerCase()} met the consistency and volume criteria.</div>`;
   element.querySelectorAll(".bar-row").forEach((row, index) =>
@@ -365,7 +365,7 @@ function drawConsistentPerformance() {
   startDate.setDate(startDate.getDate() - watchlistWindowDays + 1);
   const start = toLocalDateString(startDate);
   drawConsistentUnderperformers("vendor", "consistentVendorChart", "Vendor", start, today);
-  drawConsistentUnderperformers("flight", "consistentFlightChart", "Flight", start, today);
+  drawConsistentUnderperformers("lane", "consistentLaneChart", "Lane", start, today);
 }
 
 function displayField(row, key) {

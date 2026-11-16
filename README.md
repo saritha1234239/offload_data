@@ -1,13 +1,12 @@
 # Offload Performance Dashboard
 
-## Monthly vendor and flight watchlist
+## Four-week vendor and lane watchlist
 
-The dashboard highlights vendors and flight numbers with below-average bag
-offload rates in at least three of four weekly checks in the rolling 30-day
-window. Each counted week must include at least 20 valid bags. A lower offload
-percentage indicates poorer performance. The watchlist is independent of the
-dashboard filters. The dashboard is public, so only publish flight information
-approved for public viewing.
+The dashboard highlights vendors and lanes with below-average bag offload
+rates in at least three of four consecutive seven-day periods in the rolling
+28-day window. Each counted period must include at least 20 valid bags. A lower
+offload percentage indicates poorer performance. The watchlist is independent
+of the dashboard filters.
 
 ## Automatically sync the workbook
 
