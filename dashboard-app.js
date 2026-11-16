@@ -339,7 +339,7 @@ function drawConsistentUnderperformers(key, target, label, start, end) {
     const poorPeriods = group.periods.filter((period, index) =>
       period.eligibleBags >= watchlistMinimumBags &&
       networkRates[index] !== null &&
-      period.offloadedBags / period.eligibleBags * 100 > networkRates[index]
+      period.offloadedBags / period.eligibleBags * 100 < networkRates[index]
     ).length;
     return {
       ...group,
@@ -347,12 +347,12 @@ function drawConsistentUnderperformers(key, target, label, start, end) {
       rate: group.eligibleBags ? group.offloadedBags / group.eligibleBags * 100 : 0
     };
   }).filter(group => group.poorPeriods >= 3)
-    .sort((a, b) => b.rate - a.rate || b.poorPeriods - a.poorPeriods || a.name.localeCompare(b.name));
+    .sort((a, b) => a.rate - b.rate || b.poorPeriods - a.poorPeriods || a.name.localeCompare(b.name));
 
   const element = $(target);
   element.innerHTML = qualifying.length
-    ? `<div class="table-head watchlist-layout"><span>${label}</span><span class="count">Offload % (30 days)</span><span class="count">Weeks above avg.</span><span class="count">Bags counted</span></div>` +
-      qualifying.map(group => `<div class="bar-row watchlist-layout" title="${escapeHtml(group.name)}: ${formatPct(group.rate)} over the last 30 days; above the network average in ${group.poorPeriods} of 4 periods">
+    ? `<div class="table-head watchlist-layout"><span>${label}</span><span class="count">Offload % (30 days)</span><span class="count">Weeks below avg.</span><span class="count">Bags counted</span></div>` +
+      qualifying.map(group => `<div class="bar-row watchlist-layout" title="${escapeHtml(group.name)}: ${formatPct(group.rate)} over the last 30 days; below the network average in ${group.poorPeriods} of 4 periods">
         <span class="bar-label">${escapeHtml(group.name)}</span><span class="count">${formatPct(group.rate)}</span><span class="count">${group.poorPeriods}/4</span><span class="count">${numberText(group.eligibleBags)}</span></div>`).join("")
     : `<div class="empty-chart">No ${label.toLowerCase()} met the consistency and volume criteria.</div>`;
   element.querySelectorAll(".bar-row").forEach((row, index) =>
