@@ -1,11 +1,11 @@
 # Offload Performance Dashboard
 
-## Least-performing vendors and flights
+## Monthly vendor and flight watchlist
 
-The dashboard ranks vendors and flight numbers from highest bag offload rate
-(worst performance) in the rolling 30-day window. An entity is listed when its
-rate exceeds the network average in at least three of four periods, with at
-least 20 eligible bags in each qualifying period. The watchlist is independent
+The dashboard highlights vendors and flight numbers with worse-than-average
+bag offload rates in at least three of four weekly checks in the rolling
+30-day window. Each counted week must include at least 20 valid bags. A higher
+offload percentage means more bags were offloaded. The watchlist is independent
 of the dashboard filters. The dashboard is public, so only publish flight
 information approved for public viewing.
 
