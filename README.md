@@ -1,13 +1,13 @@
 # Offload Performance Dashboard
 
-## Consistent underperformers
+## Least-performing vendors and flights
 
-The dashboard watchlist highlights vendors and flight numbers whose bag
-offload rate exceeds the network average in at least three of four periods in
-the rolling 30-day window. Each qualifying period must contain at least 20
-eligible bags. The watchlist is independent of the dashboard filters. The
-dashboard is public, so only publish flight information approved for public
-viewing.
+The dashboard ranks vendors and flight numbers from highest bag offload rate
+(worst performance) in the rolling 30-day window. An entity is listed when its
+rate exceeds the network average in at least three of four periods, with at
+least 20 eligible bags in each qualifying period. The watchlist is independent
+of the dashboard filters. The dashboard is public, so only publish flight
+information approved for public viewing.
 
 ## Automatically sync the workbook
 
