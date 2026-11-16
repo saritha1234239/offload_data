@@ -3,6 +3,7 @@ const $ = id => document.getElementById(id);
 let loadedWorkbookVersion = window.offloadWorkbookUpdatedAt || "";
 let lastRefreshAt = null;
 let activeRangeMode = "all";
+let watchlistDate = toLocalDateString(new Date());
 
 function updateLastRefreshStamp() {
   const stamp = new Date();
@@ -38,6 +39,9 @@ const numberText = value => Number.isFinite(value)
 const formatPct = value => `${value.toFixed(1)}%`;
 const sum = (rows, key) => rows.reduce((total, row) => total + (Number.isFinite(row[key]) ? row[key] : 0), 0);
 const count = (rows, predicate) => rows.filter(predicate).length;
+const watchlistPeriodCount = 4;
+const watchlistWindowDays = 30;
+const watchlistMinimumBags = 20;
 const isShipment = row => row.recordType === "Shipment";
 const hasBagValues = row => Number.isFinite(row.bags) && Number.isFinite(row.offloadedBags);
 const bagsKnown = row => isShipment(row) && hasBagValues(row) &&
@@ -278,6 +282,92 @@ function drawRanked(rows, key, target, label, layout) {
     makeBarInteractive(element, groups[index].name, groups[index].items));
 }
 
+function drawConsistentUnderperformers(key, target, label, start, end) {
+  const startTime = Date.parse(`${start}T00:00:00Z`);
+  const network = Array.from({ length: watchlistPeriodCount }, () => ({
+    eligibleBags: 0,
+    offloadedBags: 0
+  }));
+  const groups = new Map();
+
+  records.forEach(row => {
+    if (!bagsKnown(row)) {
+      return;
+    }
+
+    const date = dateForRow(row);
+    if (!date || date < start || date > end) {
+      return;
+    }
+
+    const dayIndex = Math.floor((Date.parse(`${date}T00:00:00Z`) - startTime) / 86400000);
+    const period = Math.min(watchlistPeriodCount - 1, Math.floor(dayIndex * watchlistPeriodCount / watchlistWindowDays));
+    network[period].eligibleBags += row.bags;
+    network[period].offloadedBags += row.offloadedBags;
+
+    const rawName = row[key];
+    const name = typeof rawName === "string" ? rawName.trim() : "";
+    if (!name || name === "Unspecified") {
+      return;
+    }
+
+    if (!groups.has(name)) {
+      groups.set(name, {
+        name,
+        items: [],
+        eligibleBags: 0,
+        offloadedBags: 0,
+        periods: Array.from({ length: watchlistPeriodCount }, () => ({
+          eligibleBags: 0,
+          offloadedBags: 0
+        }))
+      });
+    }
+
+    const group = groups.get(name);
+    group.items.push(row);
+    group.eligibleBags += row.bags;
+    group.offloadedBags += row.offloadedBags;
+    group.periods[period].eligibleBags += row.bags;
+    group.periods[period].offloadedBags += row.offloadedBags;
+  });
+
+  const networkRates = network.map(week =>
+    week.eligibleBags ? week.offloadedBags / week.eligibleBags * 100 : null
+  );
+  const qualifying = [...groups.values()].map(group => {
+    const poorPeriods = group.periods.filter((period, index) =>
+      period.eligibleBags >= watchlistMinimumBags &&
+      networkRates[index] !== null &&
+      period.offloadedBags / period.eligibleBags * 100 > networkRates[index]
+    ).length;
+    return {
+      ...group,
+      poorPeriods,
+      rate: group.eligibleBags ? group.offloadedBags / group.eligibleBags * 100 : 0
+    };
+  }).filter(group => group.poorPeriods >= 3)
+    .sort((a, b) => b.rate - a.rate || b.poorPeriods - a.poorPeriods || a.name.localeCompare(b.name));
+
+  const element = $(target);
+  element.innerHTML = qualifying.length
+    ? `<div class="table-head watchlist-layout"><span>${label}</span><span class="count">30-day rate</span><span class="count">Periods</span><span class="count">Eligible bags</span></div>` +
+      qualifying.map(group => `<div class="bar-row watchlist-layout" title="${escapeHtml(group.name)}: ${formatPct(group.rate)} over the last 30 days; above the network average in ${group.poorPeriods} of 4 periods">
+        <span class="bar-label">${escapeHtml(group.name)}</span><span class="count">${formatPct(group.rate)}</span><span class="count">${group.poorPeriods}/4</span><span class="count">${numberText(group.eligibleBags)}</span></div>`).join("")
+    : `<div class="empty-chart">No ${label.toLowerCase()} met the consistency and volume criteria.</div>`;
+  element.querySelectorAll(".bar-row").forEach((row, index) =>
+    makeBarInteractive(row, `${label}: ${qualifying[index].name}`, qualifying[index].items));
+}
+
+function drawConsistentPerformance() {
+  const today = toLocalDateString(new Date());
+  const startDate = new Date(`${today}T00:00:00`);
+  startDate.setDate(startDate.getDate() - watchlistWindowDays + 1);
+  const start = toLocalDateString(startDate);
+  drawConsistentUnderperformers("vendor", "consistentVendorChart", "Vendor", start, today);
+  drawConsistentUnderperformers("flight", "consistentFlightChart", "Flight", start, today);
+}
+
 function displayField(row, key) {
   if (key.startsWith("raw_")) return row.sourceValues?.[key] ?? "";
   if (key === "date") return dateForRow(row);
@@ -356,6 +446,7 @@ function render() {
   drawRemarks(rows);
   drawRanked(rows, "lane", "laneChart", "Lane", "lane-layout");
   drawRanked(rows, "vendor", "vendorChart", "Vendor", "airline-layout");
+  drawConsistentPerformance();
 }
 
 function refreshWorkbookData() {
@@ -495,5 +586,10 @@ $("dialogNext").addEventListener("click", () => { dialogPage++; renderDialogPage
 resetToAllDates();
 window.setInterval(() => {
   refreshQuickFilterIfNeeded();
+  const today = toLocalDateString(new Date());
+  if (today !== watchlistDate) {
+    watchlistDate = today;
+    render();
+  }
   refreshWorkbookData();
 }, 60000);

@@ -97,6 +97,10 @@
     .track-cell { min-width: 0; }
     .bar-footer { color: #555; text-align: center; font-size: 10px; margin: 8px 0 0; }
     .reason-summary { margin-top: 9px; color: var(--muted); font-size: 11px; }
+    .watchlist-note { color: #555; font-size: 11px; line-height: 1.45; margin: 4px 0 12px; }
+    .watchlist-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+    .watchlist-group h3 { font-size: 12px; margin: 0 0 8px; }
+    .watchlist-layout { grid-template-columns: minmax(70px, 1fr) 58px 54px 84px; }
     .record-hint { color: var(--muted); font-size: 10px; margin-top: 12px; }
     .detail { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
     .detail summary { color: var(--navy); cursor: pointer; font-size: 12px; font-weight: 650; }
@@ -132,6 +136,8 @@
       .region-layout { grid-template-columns: 64px minmax(70px, 1fr) 38px 70px 72px; }
       .lane-layout, .airline-layout { grid-template-columns: 68px minmax(70px, 1fr) 40px 76px 72px; }
       .reason-layout { grid-template-columns: 64px minmax(70px, 1fr) 72px 56px 66px; }
+      .watchlist-grid { grid-template-columns: 1fr; gap: 16px; }
+      .watchlist-layout { grid-template-columns: minmax(70px, 1fr) 48px 45px 70px; }
     }
     @media (max-width: 440px) {
       .page { padding: 13px 10px 24px; }
@@ -146,6 +152,7 @@
       .bar-row, .table-head { gap: 6px; }
       .lane-layout, .airline-layout { grid-template-columns: 60px minmax(55px, 1fr) 35px 66px 64px; }
       .reason-layout { grid-template-columns: 55px minmax(55px, 1fr) 62px 48px 58px; }
+      .watchlist-layout { grid-template-columns: minmax(55px, 1fr) 43px 38px 62px; }
       .bar-row { font-size: 10px; }
       .count { font-size: 9px; }
     }
@@ -235,6 +242,25 @@
           <div class="panel-subtitle">Vendor-level bag offload rate; select a bar to inspect and download its records.</div>
         </div>
         <div id="vendorChart"></div>
+      </section>
+
+      <section class="panel wide" aria-labelledby="watchlistTitle">
+        <div class="panel-header">
+          <h2 id="watchlistTitle">Vendors and flights with consistently high offload rates</h2>
+        </div>
+        <p class="watchlist-note">
+          Rolling last 30 days. Flagged when the offload rate is above the network average in at least 3 of 4 periods, with at least 20 eligible bags in each qualifying period. This watchlist is independent of the dashboard filters above.
+        </p>
+        <div class="watchlist-grid">
+          <section class="watchlist-group" aria-labelledby="watchlistVendorsTitle">
+            <h3 id="watchlistVendorsTitle">Vendors</h3>
+            <div id="consistentVendorChart"></div>
+          </section>
+          <section class="watchlist-group" aria-labelledby="watchlistFlightsTitle">
+            <h3 id="watchlistFlightsTitle">Flights</h3>
+            <div id="consistentFlightChart"></div>
+          </section>
+        </div>
       </section>
 
     </div>

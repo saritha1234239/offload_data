@@ -1,5 +1,14 @@
 # Offload Performance Dashboard
 
+## Consistent underperformers
+
+The dashboard watchlist highlights vendors and flight numbers whose bag
+offload rate exceeds the network average in at least three of four periods in
+the rolling 30-day window. Each qualifying period must contain at least 20
+eligible bags. The watchlist is independent of the dashboard filters. The
+dashboard is public, so only publish flight information approved for public
+viewing.
+
 ## Automatically sync the workbook
 
 Render can download a SharePoint/OneDrive **Anyone** link without Microsoft
