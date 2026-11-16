@@ -351,7 +351,7 @@ function drawConsistentUnderperformers(key, target, label, start, end) {
 
   const element = $(target);
   element.innerHTML = qualifying.length
-    ? `<div class="table-head watchlist-layout"><span>${label}</span><span class="count">Offload % (4 weeks)</span><span class="count">Weeks below avg.</span><span class="count">Bags counted</span></div>` +
+    ? `<div class="table-head watchlist-layout"><span>${label}</span><span class="count" title="Offload percentage over the last 4 weeks">Offload %</span><span class="count" title="Seven-day periods below the network average">Weeks below avg.</span><span class="count" title="Valid bags in the four-week period">Bags</span></div>` +
       qualifying.map(group => `<div class="bar-row watchlist-layout" title="${escapeHtml(group.name)}: ${formatPct(group.rate)} over the last 4 weeks; below the network average in ${group.poorPeriods} of 4 weeks">
         <span class="bar-label">${escapeHtml(group.name)}</span><span class="count">${formatPct(group.rate)}</span><span class="count">${group.poorPeriods}/4</span><span class="count">${numberText(group.eligibleBags)}</span></div>`).join("")
     : `<div class="empty-chart">No ${label.toLowerCase()} met the consistency and volume criteria.</div>`;
