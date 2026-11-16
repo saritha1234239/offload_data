@@ -97,7 +97,7 @@
     .track-cell { min-width: 0; }
     .bar-footer { color: #555; text-align: center; font-size: 10px; margin: 8px 0 0; }
     .reason-summary { margin-top: 9px; color: var(--muted); font-size: 11px; }
-    .watchlist-note { color: #555; font-size: 11px; line-height: 1.45; margin: 4px 0 12px; }
+    .watchlist-note { color: #7c2d12; background: #fff7ed; border: 1px solid #fed7aa; border-left: 4px solid #c2410c; border-radius: 5px; font-size: 11px; line-height: 1.45; margin: 4px 0 12px; padding: 9px 12px; }
     .watchlist-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
     .watchlist-group h3 { font-size: 12px; margin: 0 0 8px; }
     .watchlist-layout { grid-template-columns: minmax(70px, 1fr) 76px 78px 62px; }
@@ -249,8 +249,8 @@
         <div class="panel-header">
           <h2 id="watchlistTitle">Least-performing vendors and lanes — last 4 weeks</h2>
         </div>
-        <p class="watchlist-note">
-          A vendor or lane appears here when its offload percentage is below the network average in at least 3 of 4 seven-day periods. Each counted period must have at least 20 valid bags. A lower offload percentage means poorer performance. Click a row to view its shipments. The list is not affected by the filters above.
+        <p class="watchlist-note" role="note">
+          <strong>Warning — follow-up recommended.</strong> The vendors and lanes below are performing very poorly compared with the network. Their offload percentage is below the network average in at least 3 of 4 seven-day periods, with at least 20 valid bags in each counted period. Lower offload percentages indicate poorer performance. Click a row to review its shipments. Dashboard filters do not affect this list.
         </p>
         <div class="watchlist-grid">
           <section class="watchlist-group" aria-labelledby="watchlistVendorsTitle">

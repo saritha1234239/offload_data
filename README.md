@@ -5,8 +5,9 @@
 The dashboard highlights vendors and lanes with below-average bag offload
 rates in at least three of four consecutive seven-day periods in the rolling
 28-day window. Each counted period must include at least 20 valid bags. A lower
-offload percentage indicates poorer performance. The watchlist is independent
-of the dashboard filters.
+offload percentage indicates poorer performance, and listed vendors and lanes
+are flagged for follow-up. The watchlist is independent of the dashboard
+filters.
 
 ## Automatically sync the workbook
 
