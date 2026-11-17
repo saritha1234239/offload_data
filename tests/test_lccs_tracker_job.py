@@ -253,6 +253,23 @@ class TrackerJobTests(unittest.TestCase):
         self.assertEqual([sheet["G1"].value, sheet["G2"].value, sheet["I2"].value],
                          ["Dest_Region", "North", "M1"])
 
+    def test_status_formula_moves_with_its_row_and_fills_new_rows(self):
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(2, "M2")])
+        workbook = openpyxl.load_workbook(self.path)
+        sheet = workbook["West"]
+        for row in range(2, 40):  # formula filled down past the data, as the team did
+            sheet[f"AA{row}"] = f'=IF(C{row}="","",IF(OR(T{row}="",T{row}=0),"Ontime","Delayed"))'
+        workbook.save(self.path)
+
+        # M1 sorts before M2, so M2 moves from row 2 to row 3.
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                source_rows=[source(1, "M1", etd="07:00:00"), source(2, "M2")])
+        sheet = self.sheet()
+        self.assertEqual([sheet["H2"].value, sheet["H3"].value], ["M1", "M2"])
+        self.assertEqual(sheet["AA2"].value, '=IF(C2="","",IF(OR(T2="",T2=0),"Ontime","Delayed"))')
+        self.assertEqual(sheet["AA3"].value, '=IF(C3="","",IF(OR(T3="",T3=0),"Ontime","Delayed"))')
+        self.assertIsNone(sheet["AA4"].value)
+
     def test_locked_workbook_is_retried(self):
         from lccs_tracker_job import WorkbookLockedError, refresh_with_retry
         calls = []
@@ -264,6 +281,9 @@ class TrackerJobTests(unittest.TestCase):
             return {"total": 1}
 
         waits = []
+        log_patch = unittest.mock.patch("lccs_tracker_job._log")  # keep the real log clean
+        log_patch.start()
+        self.addCleanup(log_patch.stop)
         with unittest.mock.patch("lccs_tracker_job.refresh", side_effect=locked_then_ok):
             result = refresh_with_retry(self.path, date(2026, 11, 16), date(2026, 11, 16),
                                         attempts=5, wait_seconds=300, sleep=waits.append)

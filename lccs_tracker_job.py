@@ -175,6 +175,22 @@ def region_sheet_name(region):
     return region if region in REGION_SHEETS else UNASSIGNED_SHEET
 
 
+ROW_TOKEN = "{row}"
+
+
+def _is_formula(value):
+    return isinstance(value, str) and value.startswith("=")
+
+
+def _formula_template(value, row):
+    """Turn same-row references (C56, $U56) into {row} so the formula can move with its row."""
+    return re.sub(rf"(\$?[A-Z]{{1,3}}\$?){row}(?!\d)", rf"\g<1>{ROW_TOKEN}", value)
+
+
+def _formula_for_row(value, row):
+    return value.replace(ROW_TOKEN, str(row)) if _is_formula(value) else value
+
+
 def read_existing(sheet, existing=None):
     """Return {shipment_id: (region, values)} for rows that carry an LCCS_ID."""
     existing = {} if existing is None else existing
@@ -183,8 +199,10 @@ def read_existing(sheet, existing=None):
     for row in range(header + 1, sheet.max_row + 1):
         shipment_id = sheet.cell(row, ID_COLUMN).value
         values = [sheet.cell(row, column).value if column else None for column in columns]
+        values = [_formula_template(v, row) if _is_formula(v) else v for v in values]
         if shipment_id in (None, ""):
-            if any(value not in (None, "") for value in values):
+            # Formulas filled down below the data (e.g. Status) are not typed rows.
+            if any(value not in (None, "") and not _is_formula(value) for value in values):
                 raise TrackerJobError(
                     f"'{sheet.title}' row {row} has data but no {ID_HEADER}; "
                     "add rows only through the refresh job."
@@ -269,7 +287,7 @@ def write_rows(sheet, rows):
         sheet.cell(row, ID_COLUMN).value = shipment_id
         for column, value in zip(columns, values):
             if column:
-                sheet.cell(row, column).value = None if value in ("", None) else value
+                sheet.cell(row, column).value = None if value in ("", None) else _formula_for_row(value, row)
 
     sheet.cell(header, REGION_COLUMN).value = REGION_HEADER
     sheet.cell(header, ID_COLUMN).value = ID_HEADER
@@ -390,6 +408,13 @@ def refresh(workbook_path, from_date, to_date, hub_code=None, source_rows=None):
     if source_rows is None:
         source_rows = fetch_lccs_rows(from_date, to_date, hub_code)
     merged, added, updated = merge(existing, source_rows)
+    # If the team uses a Status formula, give new rows the same formula.
+    status_formula = next((values[STATUS_INDEX] for _, values in existing.values()
+                           if _is_formula(values[STATUS_INDEX])), None)
+    if status_formula:
+        for _, values in merged.values():
+            if values[STATUS_INDEX] in (None, ""):
+                values[STATUS_INDEX] = status_formula
     # The tracker holds only the refreshed window (default yesterday and today).
     window = (from_date.isoformat(), to_date.isoformat())
     kept = {
