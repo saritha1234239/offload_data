@@ -175,6 +175,11 @@ def region_sheet_name(region):
     return region if region in REGION_SHEETS else UNASSIGNED_SHEET
 
 
+def _text_id(source_row):
+    value = source_row.get("XAWBID")
+    return "" if value is None else str(value).strip()
+
+
 ROW_TOKEN = "{row}"
 
 
@@ -415,11 +420,16 @@ def refresh(workbook_path, from_date, to_date, hub_code=None, source_rows=None):
         for _, values in merged.values():
             if values[STATUS_INDEX] in (None, ""):
                 values[STATUS_INDEX] = status_formula
-    # The tracker holds only the refreshed window (default yesterday and today).
+    # The tracker holds only the refreshed window (default yesterday and today), and
+    # on a full (all-hub) refresh only the MAWBs LCCS still returns for it, so rows
+    # that stopped qualifying (e.g. changed to surface, deleted) are dropped.
     window = (from_date.isoformat(), to_date.isoformat())
+    returned = {str(_text_id(row)) for row in source_rows}
     kept = {
         shipment_id: row for shipment_id, row in merged.items()
         if window[0] <= str(row[1][0] or "")[:10] <= window[1]
+        # An empty LCCS result is treated as a fault, never as "remove everything".
+        and (hub_code is not None or not returned or shipment_id in returned)
     }
     write_region_sheets(workbook, kept, sheets)
     save_atomically(workbook, workbook_path)
@@ -554,7 +564,7 @@ def main():
     _report(
         f"Tracker updated for {from_date} to {to_date}: "
         f"{result['added']} added, {result['updated']} refreshed, "
-        f"{result['removed']} older rows removed, {result['total']} rows total."
+        f"{result['removed']} rows removed, {result['total']} rows total."
     )
     return 0
 

@@ -80,7 +80,8 @@ class TrackerJobTests(unittest.TestCase):
     def test_rows_older_than_the_window_are_removed(self):
         refresh(self.path, date(2026, 11, 14), date(2026, 11, 15),
                 source_rows=[source(1, "OLD", day="2026-11-14"), source(3, "KEEP", day="2026-11-15")])
-        result = refresh(self.path, date(2026, 11, 15), date(2026, 11, 16), source_rows=[source(2, "NEW")])
+        result = refresh(self.path, date(2026, 11, 15), date(2026, 11, 16),
+                         source_rows=[source(3, "KEEP", day="2026-11-15"), source(2, "NEW")])
         self.assertEqual(result["removed"], 1)
         sheet = self.sheet()
         self.assertEqual([sheet["H2"].value, sheet["H3"].value, sheet["H4"].value], ["KEEP", "NEW", None])
@@ -269,6 +270,22 @@ class TrackerJobTests(unittest.TestCase):
         self.assertEqual(sheet["AA2"].value, '=IF(C2="","",IF(OR(T2="",T2=0),"Ontime","Delayed"))')
         self.assertEqual(sheet["AA3"].value, '=IF(C3="","",IF(OR(T3="",T3=0),"Ontime","Delayed"))')
         self.assertIsNone(sheet["AA4"].value)
+
+    def test_rows_lccs_no_longer_returns_for_the_window_are_removed(self):
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                source_rows=[source(1, "AIR"), source(2, "NOW-SURFACE")])
+        result = refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "AIR")])
+        self.assertEqual((result["removed"], result["total"]), (1, 1))
+        self.assertEqual([self.sheet()["H2"].value, self.sheet()["H3"].value], ["AIR", None])
+        # An empty LCCS result keeps the rows rather than wiping the tracker.
+        result = refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[])
+        self.assertEqual((result["removed"], result["total"]), (0, 1))
+        # A single-hub refresh does not see other hubs, so it must not drop their rows.
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                source_rows=[source(1, "AIR"), source(2, "OTHER-HUB")])
+        result = refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), hub_code="BOM",
+                         source_rows=[source(1, "AIR")])
+        self.assertEqual(result["total"], 2)
 
     def test_locked_workbook_is_retried(self):
         from lccs_tracker_job import WorkbookLockedError, refresh_with_retry

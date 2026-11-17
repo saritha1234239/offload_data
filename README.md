@@ -25,7 +25,8 @@ connected to the LCCS pipeline or the public dashboard; share the file through
 OneDrive/SharePoint and assign team permissions there.
 
 The tracker covers all hubs (no per-user hub filter) and air MAWBs only
-(`XAWBMODE = 'A'`).
+(`XAWBMODE = 'A'`). Rows for the refreshed dates that LCCS no longer returns
+(for example a MAWB changed to surface or deleted) are removed.
 
 To refresh the workbook (defaults: yesterday to today, all hubs):
 
