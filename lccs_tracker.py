@@ -91,8 +91,13 @@ SELECT
     awb.XAWFLTNO AS XAWFLTNO,
     awb.XAWFLTNO2 AS XAWFLTNO2,
     awb.XAWSDPRTIME AS XAWSDPRTIME,
+    awb.XAWSARVTIME AS XAWSARVTIME,
     awb.XAWPACKEGE AS XAWPACKEGE,
     awb.XAWBCDWGT AS XAWBCDWGT,
+    (
+        SELECT COUNT(DISTINCT cons.XAWDDKTID) FROM xawbdtl cons
+        WHERE cons.XAIRWAYBILLNO = awb.XAWBILLNO
+    ) AS total_cons,
     (
         SELECT region_hub.HUBZONE FROM mhubmst region_hub
         WHERE region_hub.MHBHUBCD = awb.XAWBOOKLOC
@@ -213,7 +218,12 @@ def map_lccs_row(source, manual=None):
     # The PHP report assigns Prime/Lean slots only to air MAWBs (XAWBMODE = "A").
     is_air = _text(_value(source, "XAWBMODE")).upper() == "A"
     etd = _text(_value(source, "XAWSDPRTIME"))
-    eta = ""
+    eta = _text(_value(source, "XAWSARVTIME"))  # scheduled arrival time
+    if eta in ("00:00:00", "00:00"):
+        eta = ""
+    total_cons = _value(source, "total_cons")
+    if total_cons in ("", None, 0):
+        total_cons = _value(manual, "total_cons")
     scheduled_etd = _override(manual, "scheduled_etd_override", etd)
     scheduled_eta = _override(manual, "scheduled_eta_override", eta)
     impacted_cons = _value(manual, "impacted_cons")
@@ -238,7 +248,7 @@ def map_lccs_row(source, manual=None):
         _dispatch_type(_value(source, "XAWSDPRTIME")) if is_air else "",
         _value(source, "XAWPACKEGE"),
         _value(source, "XAWBCDWGT"),
-        _value(manual, "total_cons"),
+        total_cons,
         _value(manual, "offloaded_bags"),
         impacted_cons,
         _value(manual, "next_flight"),

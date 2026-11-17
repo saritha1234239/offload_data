@@ -10,7 +10,10 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from env_file import ENV_FILE, env_value, save_env
 from workbook_sync import MAX_WORKBOOK_BYTES, WorkbookSyncError, parse_workbook
+
+TOKEN_ENV = "DASHBOARD_UPLOAD_TOKEN"
 
 
 DEFAULT_ENDPOINT = "https://offload-dashboard.onrender.com/api/upload"
@@ -45,11 +48,11 @@ def configure(workbook_path, endpoint):
     if not endpoint.startswith("https://"):
         raise WorkbookSyncError("The dashboard upload endpoint must use HTTPS.")
 
+    save_env({TOKEN_ENV: token}, ENV_FILE)
     CONFIG_DIRECTORY.mkdir(parents=True, exist_ok=True)
     content = json.dumps({
         "workbookPath": str(workbook_path),
         "endpoint": endpoint,
-        "token": token,
     }, indent=2)
     file_descriptor, temporary_path = tempfile.mkstemp(
         prefix=".sync-config-", suffix=".tmp", dir=CONFIG_DIRECTORY
@@ -64,7 +67,7 @@ def configure(workbook_path, endpoint):
         except OSError:
             pass
         raise
-    print(f"Sync configuration saved to {CONFIG_PATH}")
+    print(f"Sync settings saved to {CONFIG_PATH}; upload token saved to {ENV_FILE}")
 
 
 def sync_once():
@@ -76,10 +79,12 @@ def sync_once():
         config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         workbook_path = config["workbookPath"]
         endpoint = config["endpoint"]
-        token = config["token"]
     except (OSError, KeyError, json.JSONDecodeError) as exc:
         raise WorkbookSyncError(f"Could not read sync configuration at {CONFIG_PATH}.") from exc
-    if not endpoint.startswith("https://") or not token:
+    token = env_value(TOKEN_ENV, ENV_FILE)
+    if not token:
+        raise WorkbookSyncError(f"{TOKEN_ENV} is not set in {ENV_FILE.name}. Run --configure again.")
+    if not endpoint.startswith("https://"):
         raise WorkbookSyncError("The saved sync configuration is incomplete.")
 
     content = _read_workbook(workbook_path)

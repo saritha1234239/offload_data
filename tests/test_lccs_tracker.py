@@ -84,6 +84,14 @@ class LccsTrackerTests(unittest.TestCase):
         incomplete_lane = map_lccs_row({"XAWBID": "awb-2", "XAWBOOKLOC": "BLR"})
         self.assertEqual(incomplete_lane["values"][3], "")
 
+    def test_eta_and_total_cons_come_from_lccs(self):
+        values = map_lccs_row({"XAWBID": "1", "XAWSARVTIME": "12:25:00", "total_cons": 7})["values"]
+        self.assertEqual((values[10], values[14]), ("12:25:00", 7))
+        blank = map_lccs_row({"XAWBID": "2", "XAWSARVTIME": "00:00:00", "total_cons": 0})["values"]
+        self.assertEqual((blank[10], blank[14]), ("", ""))
+        self.assertIn("awb.XAWSARVTIME AS XAWSARVTIME", LCCS_TRACKER_QUERY)
+        self.assertIn("COUNT(DISTINCT cons.XAWDDKTID)", LCCS_TRACKER_QUERY)
+
     def test_scheduled_field_overrides_survive_source_refresh_mapping(self):
         record = map_lccs_row(
             {

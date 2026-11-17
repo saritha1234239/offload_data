@@ -47,9 +47,13 @@ edits a co-author makes in Excel for the web that have not yet synced to the
 running computer can be overwritten; OneDrive version history can restore them.
 
 The job stores each row's LCCS `XAWBID` in hidden column C (`LCCS_ID`),
-refreshes the LCCS columns, keeps team-entered columns (ETA, Total Cons,
-offload details, NDC_Remarks, LH pickup, Status), adds new MAWBs, and never
-deletes rows outside the refreshed dates. Close the workbook in Excel before a
+refreshes the LCCS columns (including ETA from `XAWSARVTIME` and Total Cons,
+the count of dockets on the MAWB), keeps team-entered columns (offload
+details, NDC_Remarks, LH pickup, Status), adds new MAWBs, and keeps
+only the refreshed dates (yesterday and today by default), removing older rows.
+Region sheets are protected: editors can type only in the team columns and
+cannot insert or delete rows (set `TRACKER_SHEET_PASSWORD` in `.env` to require
+a password to unprotect). Close the workbook in Excel before a
 refresh. Rows typed without an `LCCS_ID`, or an `NDC_Remarks` value not in the
 list, stop the refresh without changing the file.
 
@@ -186,16 +190,16 @@ be signed in, online, and have the workbook available for scheduled uploads.
    Paste the generated value directly into Render's environment setting. Do not
    commit it or send it in chat. Save the setting and wait for deployment.
 2. In a terminal on the Windows computer, configure the local workbook path.
-   The token is entered with hidden input and saved in the current user's local
-   application-data folder, not in this repository:
+   The token is entered with hidden input and saved as `DASHBOARD_UPLOAD_TOKEN`
+   in the root `.env` file (see [Credentials](#credentials)):
 
    ```powershell
    & .\.venv\Scripts\python.exe .\sync_workbook_to_dashboard.py --configure --workbook "C:\path\to\the\synced\workbook.xlsx"
    ```
 
    Configuration also performs an initial upload. The workbook must contain the
-   four expected dashboard sheets. The local configuration file contains the
-   upload token; keep the Windows user account private and do not share that file.
+   expected dashboard sheets. The local `sync-config.json` keeps only the
+   workbook path and endpoint.
 3. If the initial upload succeeds, install the five-minute scheduled task:
 
    ```powershell
@@ -215,6 +219,19 @@ limits workbook uploads to 30 MB, validates the workbook before replacing the
 dashboard data, and keeps the previous data if validation fails. Once local
 uploads are working, remove `WORKBOOK_DOWNLOAD_URL` from Render if it is no
 longer needed. Anyone with the dashboard URL can see the published shipment data.
+
+## Credentials
+
+On this computer every credential lives in the root `.env` file, which Git
+ignores. Names are listed in [.env.example](./.env.example):
+
+- `LCCS_DB_*`: the LCCS read-only database login (`lccs_connection.py --configure` writes them)
+- `DASHBOARD_UPLOAD_TOKEN`: the dashboard upload token (`sync_workbook_to_dashboard.py --configure` writes it)
+- `SMTP_*`, `EMAIL_FROM`: email settings for local runs of `dashboard_delivery.py`
+
+Values already set in the process environment take precedence. GitHub Actions
+cannot read this file, so the daily email keeps using repository secrets, and
+Render keeps its own `DASHBOARD_UPLOAD_TOKEN` setting.
 
 ## Daily dashboard snapshot
 
@@ -238,6 +255,12 @@ these **repository secrets**:
 | `SMTP_USERNAME` | SMTP username |
 | `SMTP_PASSWORD` | SMTP password |
 | `EMAIL_RECIPIENTS` | Comma-separated authorized email addresses |
+
+For local runs of `dashboard_delivery.py`, SMTP settings can instead be placed
+in the root `.env` file. The file is ignored by Git; keep it on a trusted
+computer and never commit or share it. Environment variables already set by
+the process take precedence over values in `.env`. GitHub Actions continues to
+use the repository secrets above.
 
 Add these **repository variables** on the **Variables** tab:
 

@@ -1,9 +1,9 @@
 """Refresh the LH Performance Tracker workbook from the LCCS database.
 
-LCCS columns are refreshed on every run. Columns the team fills in (ETA, Total
-Cons, offload details, NDC remarks, LH pickup, Status) are read back from the
-workbook first and preserved. Rows outside the refreshed date window are left
-unchanged, so history is never deleted.
+LCCS columns are refreshed on every run. Columns the team fills in (offload
+details, NDC remarks, LH pickup, Status) are read back from the workbook first
+and preserved. Only the refreshed date window (default yesterday and today) is
+kept; older rows are removed.
 """
 import argparse
 import json
@@ -16,7 +16,11 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import openpyxl
+from openpyxl.styles import Protection
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
+
+from env_file import env_value
 
 from lccs_connection import CONFIG_DIRECTORY, LccsConfigError, connect
 from lccs_tracker import (
@@ -45,11 +49,13 @@ ID_HEADER = "LCCS_ID"
 REGION_COLUMN = 2  # B, hidden
 REGION_HEADER = "Org_Region"
 MIN_DROPDOWN_ROWS = 5000
+SHEET_PASSWORD_ENV = "TRACKER_SHEET_PASSWORD"  # optional, in .env
+STATUS_OPTIONS = ("Ontime", "Delayed")
+STATUS_FORMULA = '"' + ",".join(STATUS_OPTIONS) + '"'
 
 # Tracker column index (0-based within D:AA) -> manual key understood by map_lccs_row.
+# ETA (XAWSARVTIME) and Total Cons (docket count) come from LCCS on every refresh.
 MANUAL_COLUMNS = {
-    10: "scheduled_eta_override",  # ETA
-    14: "total_cons",
     15: "offloaded_bags",
     16: "impacted_cons",
     17: "next_flight",
@@ -186,10 +192,41 @@ def write_rows(sheet, rows):
     sheet.column_dimensions["B"].hidden = True
     sheet.column_dimensions["C"].hidden = True
     end_row = max(MIN_DROPDOWN_ROWS, FIRST_DATA_ROW + len(rows) + 500)
+    status_validation = None
     for validation in sheet.data_validations.dataValidation:
-        if "X" in str(validation.sqref).upper():
+        if validation.formula1 == STATUS_FORMULA:
+            status_validation = validation
+        elif "X" in str(validation.sqref).upper():
             validation.sqref = openpyxl.worksheet.cell_range.MultiCellRange(f"X{FIRST_DATA_ROW}:X{end_row}")
+    if status_validation is None:
+        status_validation = DataValidation(type="list", formula1=STATUS_FORMULA, allow_blank=True)
+        sheet.add_data_validation(status_validation)
+    status_validation.sqref = openpyxl.worksheet.cell_range.MultiCellRange(f"AA{FIRST_DATA_ROW}:AA{end_row}")
     sheet.auto_filter.ref = f"D{HEADER_ROW}:AA{end_row}"
+    protect_sheet(sheet, len(rows))
+
+
+def protect_sheet(sheet, row_count):
+    """Editors may type only in the team columns; LCCS columns and rows cannot be deleted."""
+    unlocked = Protection(locked=False)
+    for index in MANUAL_COLUMNS:
+        letter = get_column_letter(FIRST_COLUMN + index)
+        sheet.column_dimensions[letter].protection = unlocked  # empty cells below the data
+        for row in range(FIRST_DATA_ROW, FIRST_DATA_ROW + row_count):
+            sheet.cell(row, FIRST_COLUMN + index).protection = unlocked
+    protection = sheet.protection
+    protection.sheet = True
+    protection.autoFilter = False  # False = allowed
+    protection.sort = False
+    protection.formatColumns = False
+    protection.formatRows = False
+    protection.deleteRows = True
+    protection.insertRows = True
+    protection.deleteColumns = True
+    protection.insertColumns = True
+    password = env_value(SHEET_PASSWORD_ENV)
+    if password:
+        protection.password = password
 
 
 def _new_region_sheet(workbook, title, template):
@@ -257,9 +294,15 @@ def refresh(workbook_path, from_date, to_date, hub_code=None, source_rows=None):
     if source_rows is None:
         source_rows = fetch_lccs_rows(from_date, to_date, hub_code)
     merged, added, updated = merge(existing, source_rows)
-    write_region_sheets(workbook, merged, sheets)
+    # The tracker holds only the refreshed window (default yesterday and today).
+    window = (from_date.isoformat(), to_date.isoformat())
+    kept = {
+        shipment_id: row for shipment_id, row in merged.items()
+        if window[0] <= str(row[1][0] or "")[:10] <= window[1]
+    }
+    write_region_sheets(workbook, kept, sheets)
     save_atomically(workbook, workbook_path)
-    return {"added": added, "updated": updated, "total": len(merged)}
+    return {"added": added, "updated": updated, "removed": len(merged) - len(kept), "total": len(kept)}
 
 
 def saved_workbook():
@@ -375,7 +418,8 @@ def main():
         return 1
     _report(
         f"Tracker updated for {from_date} to {to_date}: "
-        f"{result['added']} added, {result['updated']} refreshed, {result['total']} rows total."
+        f"{result['added']} added, {result['updated']} refreshed, "
+        f"{result['removed']} older rows removed, {result['total']} rows total."
     )
     return 0
 

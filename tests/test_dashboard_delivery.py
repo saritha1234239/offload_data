@@ -4,6 +4,8 @@ import sys
 import types
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -118,6 +120,22 @@ class DashboardDeliveryTests(unittest.TestCase):
         }, clear=True):
             with self.assertRaisesRegex(DeliveryError, "Configure both SMTP_USERNAME"):
                 dashboard_delivery.send_email(PNG_DATA)
+
+    def test_main_loads_dotenv_without_overriding_process_environment(self):
+        with TemporaryDirectory() as temp_dir:
+            env_file = Path(temp_dir) / ".env"
+            env_file.write_text(
+                "SMTP_HOST=from-file.example.com\nSMTP_PASSWORD=file-password\n",
+                encoding="utf-8",
+            )
+            with patch.object(dashboard_delivery, "ENV_FILE", env_file), \
+                    patch.dict(os.environ, {"SMTP_HOST": "from-process.example.com"}, clear=True), \
+                    patch.object(dashboard_delivery, "render_dashboard", return_value=PNG_DATA), \
+                    patch.object(dashboard_delivery, "send_email"), \
+                    patch.object(dashboard_delivery, "send_whatsapp"):
+                self.assertEqual(dashboard_delivery.main(), 0)
+                self.assertEqual(os.environ["SMTP_HOST"], "from-process.example.com")
+                self.assertEqual(os.environ["SMTP_PASSWORD"], "file-password")
 
     def test_whatsapp_unconfigured_is_optional(self):
         with patch.dict(os.environ, {

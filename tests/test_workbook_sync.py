@@ -278,8 +278,10 @@ class WorkbookSyncTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             workbook_path = Path(directory) / "tracker.xlsx"
-            workbook_path.write_bytes(workbook_fixture())
+            workbook_bytes = workbook_fixture()
+            workbook_path.write_bytes(workbook_bytes)
             config_path = Path(directory) / "sync-config.json"
+            env_path = Path(directory) / ".env"
             requests = []
 
             def open_request(request, timeout):
@@ -293,6 +295,10 @@ class WorkbookSyncTests(unittest.TestCase):
             with (
                 patch.object(local_sync, "CONFIG_DIRECTORY", Path(directory)),
                 patch.object(local_sync, "CONFIG_PATH", config_path),
+                patch.object(local_sync, "ENV_FILE", env_path),
+                patch.dict(os.environ, {
+                    name: value for name, value in os.environ.items() if name != "DASHBOARD_UPLOAD_TOKEN"
+                }, clear=True),
                 patch(
                     "sync_workbook_to_dashboard.getpass.getpass",
                     side_effect=["test-upload-token-value-at-least-32"] * 2,
@@ -307,9 +313,11 @@ class WorkbookSyncTests(unittest.TestCase):
                 requests[0].get_header("Authorization"),
                 "Bearer test-upload-token-value-at-least-32",
             )
-            self.assertEqual(requests[0].data, workbook_fixture())
+            self.assertEqual(requests[0].data, workbook_bytes)
             saved_config = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(saved_config["workbookPath"], str(workbook_path.resolve()))
+            self.assertNotIn("token", saved_config)
+            self.assertIn("DASHBOARD_UPLOAD_TOKEN=", env_path.read_text(encoding="utf-8"))
 
     def test_graph_download_uses_bearer_token_and_file_scoped_endpoint(self):
             class FakeApplication:

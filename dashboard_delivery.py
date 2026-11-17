@@ -12,6 +12,9 @@ from datetime import datetime, timedelta, timezone
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 
 LOGGER = logging.getLogger("dashboard_delivery")
@@ -20,6 +23,7 @@ DEFAULT_DASHBOARD_URL = "https://offload-dashboard.onrender.com/"
 DEFAULT_EMAIL_FROM = "saritha.m@criticalog.com"
 DEFAULT_WHATSAPP_API_VERSION = "v22.0"
 WHATSAPP_BASE_URL = "https://graph.facebook.com"
+ENV_FILE = Path(__file__).with_name(".env")
 
 
 class DeliveryError(Exception):
@@ -340,6 +344,7 @@ def send_whatsapp(snapshot):
 
 
 def main():
+    load_dotenv(dotenv_path=ENV_FILE, override=False)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",

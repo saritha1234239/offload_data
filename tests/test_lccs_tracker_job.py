@@ -29,7 +29,7 @@ def source(shipment_id, mawb, flight="LH 1", day="2026-11-16", etd="08:00:00"):
     return {
         "XAWBID": shipment_id, "XAWSDPRDT": day, "XAWBOOKLOC": "BOM", "XAWPKUPLOC": "DEL",
         "mawb_no": mawb, "VENDORNM": "Vendor", "SECTORMODE": "D", "XAWBMODE": "A",
-        "XAWFLTNO": flight, "XAWSDPRTIME": etd, "XAWPACKEGE": 3, "XAWBCDWGT": 10.5, "is_nfo": "",
+        "XAWFLTNO": flight, "XAWSDPRTIME": etd, "XAWSARVTIME": "10:15:00", "total_cons": 4, "XAWPACKEGE": 3, "XAWBCDWGT": 10.5, "is_nfo": "",
         "org_region": "WEST",
     }
 
@@ -49,7 +49,7 @@ class TrackerJobTests(unittest.TestCase):
     def test_first_refresh_writes_rows_with_hidden_id(self):
         result = refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
                          source_rows=[source(2, "M2"), source(1, "M1")])
-        self.assertEqual(result, {"added": 2, "updated": 0, "total": 2})
+        self.assertEqual(result, {"added": 2, "updated": 0, "removed": 0, "total": 2})
         sheet = self.sheet()
         self.assertEqual(sheet["C4"].value, "LCCS_ID")
         self.assertTrue(sheet.column_dimensions["C"].hidden)
@@ -61,7 +61,6 @@ class TrackerJobTests(unittest.TestCase):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
         workbook = openpyxl.load_workbook(self.path)
         sheet = workbook["West"]
-        sheet["N5"] = "11:30"
         sheet["S5"] = 2
         sheet["X5"] = NDC_REMARK_OPTIONS[4]
         sheet["Y5"] = "2026-11-16"
@@ -70,20 +69,21 @@ class TrackerJobTests(unittest.TestCase):
 
         result = refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
                          source_rows=[source(1, "M1", flight="LH 9"), source(3, "M3")])
-        self.assertEqual(result, {"added": 1, "updated": 1, "total": 2})
+        self.assertEqual(result, {"added": 1, "updated": 1, "removed": 0, "total": 2})
         sheet = self.sheet()
         self.assertEqual(sheet["L5"].value, "LH 9")
         self.assertEqual(
-            [sheet["N5"].value, sheet["S5"].value, sheet["X5"].value, sheet["Y5"].value, sheet["AA5"].value],
-            ["11:30", 2, NDC_REMARK_OPTIONS[4], "2026-11-16", "Closed"],
+            [sheet["N5"].value, sheet["R5"].value, sheet["S5"].value, sheet["X5"].value, sheet["Y5"].value, sheet["AA5"].value],
+            ["10:15:00", 4, 2, NDC_REMARK_OPTIONS[4], "2026-11-16", "Closed"],
         )
 
-    def test_rows_outside_refreshed_window_are_kept(self):
-        refresh(self.path, date(2026, 11, 15), date(2026, 11, 15),
-                source_rows=[source(1, "OLD", day="2026-11-15")])
-        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(2, "NEW")])
+    def test_rows_older_than_the_window_are_removed(self):
+        refresh(self.path, date(2026, 11, 14), date(2026, 11, 15),
+                source_rows=[source(1, "OLD", day="2026-11-14"), source(3, "KEEP", day="2026-11-15")])
+        result = refresh(self.path, date(2026, 11, 15), date(2026, 11, 16), source_rows=[source(2, "NEW")])
+        self.assertEqual(result["removed"], 1)
         sheet = self.sheet()
-        self.assertEqual([sheet["H5"].value, sheet["H6"].value], ["OLD", "NEW"])
+        self.assertEqual([sheet["H5"].value, sheet["H6"].value, sheet["H7"].value], ["KEEP", "NEW", None])
 
     def test_invalid_ndc_typed_in_workbook_stops_refresh_without_overwriting(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
@@ -131,7 +131,7 @@ class TrackerJobTests(unittest.TestCase):
 
     def test_datetime_departure_dates_are_stored_and_read_as_dates(self):
         from datetime import datetime
-        refresh(self.path, date(2026, 10, 20), date(2026, 10, 20),
+        refresh(self.path, date(2026, 10, 20), date(2026, 10, 21),
                 source_rows=[source(1, "M1", day=datetime(2026, 10, 20, 0, 0)),
                              source(2, "M2", day="2026-10-21T00:00:00")])
         sheet = self.sheet()
@@ -155,8 +155,12 @@ class TrackerJobTests(unittest.TestCase):
         self.assertEqual(workbook["East"]["D4"].value, "Departure_Date")
         self.assertTrue(workbook["East"].column_dimensions["C"].hidden)
         for name in ("North", "West", "East", "South"):
-            formulas = [v.formula1 for v in workbook[name].data_validations.dataValidation]
-            self.assertEqual(formulas, ["=NDC_Remarks_Options"], name)
+            validations = {v.formula1: str(v.sqref) for v in workbook[name].data_validations.dataValidation}
+            self.assertEqual(validations, {"=NDC_Remarks_Options": "X5:X5000", '"Ontime,Delayed"': "AA5:AA5000"}, name)
+
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=rows)
+        validations = openpyxl.load_workbook(self.path)["South"].data_validations.dataValidation
+        self.assertEqual(len(validations), 2)  # not duplicated on later refreshes
 
         data = parse_workbook(self.path.read_bytes())
         self.assertEqual(sorted(r["region"] for r in data["records"]), ["North", "South", "South", "West"])
@@ -180,6 +184,16 @@ class TrackerJobTests(unittest.TestCase):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
                 source_rows=[dict(source(1, "M1"), org_region="WEST")])
         self.assertNotIn("Unassigned", openpyxl.load_workbook(self.path).sheetnames)
+
+    def test_region_sheets_are_protected_except_team_columns(self):
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
+        sheet = self.sheet()
+        self.assertTrue(sheet.protection.sheet)
+        self.assertTrue(sheet.protection.deleteRows)
+        self.assertFalse(sheet.protection.autoFilter)
+        self.assertTrue(sheet["H5"].protection.locked)  # LCCS column (MAWB)
+        self.assertFalse(sheet["S5"].protection.locked)  # Offloaded bags
+        self.assertFalse(sheet["AA5"].protection.locked)  # Status
 
     def test_duplicate_ids_across_sheets_stop_refresh(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])

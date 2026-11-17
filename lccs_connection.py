@@ -1,18 +1,18 @@
 import argparse
 import getpass
-import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
+from env_file import ENV_FILE, env_value, save_env
 
+
+# Logs and non-secret job settings; credentials live only in the project .env file.
 CONFIG_DIRECTORY = Path(
     os.environ.get("LOCALAPPDATA")
     or os.environ.get("APPDATA")
     or Path.home()
 ) / "OffloadDashboard"
-CONFIG_PATH = CONFIG_DIRECTORY / "lccs-config.json"
 
 FIELDS = (
     ("db_type", "Database type (e.g. mysql)", "mysql"),
@@ -21,6 +21,14 @@ FIELDS = (
     ("database", "Database (schema) name", None),
     ("username", "Read-only username", None),
 )
+ENV_KEYS = {
+    "db_type": "LCCS_DB_TYPE",
+    "host": "LCCS_DB_HOST",
+    "port": "LCCS_DB_PORT",
+    "database": "LCCS_DB_NAME",
+    "username": "LCCS_DB_USER",
+    "password": "LCCS_DB_PASSWORD",
+}
 
 
 class LccsConfigError(ValueError):
@@ -35,35 +43,28 @@ def _ask(label, default):
     return value
 
 
-def save_config(settings, path=CONFIG_PATH):
-    missing = [key for key, _, _ in FIELDS if not str(settings.get(key, "")).strip()]
-    if missing or not settings.get("password"):
-        raise LccsConfigError(f"Missing LCCS settings: {', '.join(missing + (['password'] if not settings.get('password') else []))}")
+def _validate(settings):
+    missing = [key for key in ENV_KEYS if not str(settings.get(key, "")).strip()]
+    if missing:
+        raise LccsConfigError(f"Missing LCCS settings: {', '.join(missing)}")
     if not str(settings["port"]).isdigit():
         raise LccsConfigError("Port must be a number.")
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(prefix=".lccs-config-", suffix=".tmp", dir=path.parent)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output:
-            json.dump({**settings, "port": int(settings["port"])}, output, indent=2)
-        os.replace(temporary, path)
-    except Exception:
-        try:
-            os.unlink(temporary)
-        except OSError:
-            pass
-        raise
 
 
-def load_config(path=CONFIG_PATH):
-    path = Path(path)
-    if not path.is_file():
-        raise LccsConfigError("LCCS connection is not configured. Run: python lccs_connection.py --configure")
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise LccsConfigError(f"Could not read {path}.") from exc
+def save_config(settings, path=ENV_FILE):
+    _validate(settings)
+    save_env({ENV_KEYS[key]: settings[key] for key in ENV_KEYS}, path)
+
+
+def load_config(path=ENV_FILE):
+    settings = {key: env_value(name, path) for key, name in ENV_KEYS.items()}
+    if not settings["host"] or not settings["password"]:
+        raise LccsConfigError(
+            f"LCCS connection is not configured in {Path(path).name}. "
+            "Run: python lccs_connection.py --configure"
+        )
+    _validate(settings)
+    return {**settings, "port": int(settings["port"])}
 
 
 def configure():
@@ -74,7 +75,7 @@ def configure():
         raise LccsConfigError("Passwords did not match.")
     settings["password"] = password
     save_config(settings)
-    print(f"Saved to {CONFIG_PATH} (this Windows user only; not in the repository).")
+    print(f"Saved to {ENV_FILE} (ignored by Git).")
 
 
 def show():
