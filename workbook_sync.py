@@ -188,8 +188,32 @@ TRACKER_HEADERS = (
     "NFO_Flag", "Direct / Console", "Flight_Number", "ETD", "ETA", "Type as per ETD",
     "Bags", "CD weight", "Total Cons", "Offloaded bags", "Impacted cons",
     "Next_flight", "ETD", "ETA", "NDC_Remarks", "LH_Pickup_date", "LH_Pickup_time",
-    "Status",
+    "Status", "Dest_Region",
 )
+TRACKER_OPTIONAL_HEADERS = {"Dest_Region"}
+
+
+def _tracker_header_key(value):
+    return re.sub(r"[^a-z0-9]", "", _text(value).lower())
+
+
+def _tracker_columns(row):
+    """Map each TRACKER_HEADERS entry to a 0-based column index by header name, or None.
+
+    Case, spaces and punctuation are ignored; repeated names (ETD, ETA) match left to right.
+    """
+    keys = [(index, _tracker_header_key(value)) for index, value in enumerate(row)
+            if index >= TRACKER_FIRST_COLUMN - 1]
+    used = set()
+    positions = []
+    for header in TRACKER_HEADERS:
+        wanted = _tracker_header_key(header)
+        match = next((i for i, key in keys if key == wanted and i not in used), None)
+        positions.append(match)
+        if match is not None:
+            used.add(match)
+    required = [p for p, h in zip(positions, TRACKER_HEADERS) if h not in TRACKER_OPTIONAL_HEADERS]
+    return positions if all(p is not None for p in required) else None
 
 
 def _column_letter(number):
@@ -206,37 +230,36 @@ def _parse_lccs_tracker(sheet):
     Every tracker row is a dispatched air MAWB from LCCS, and the team records
     offloads as exceptions, so a blank Offloaded bags cell counts as 0.
     """
-    # Headers are in row 4 of the template, but editors may delete rows above them.
-    width = TRACKER_FIRST_COLUMN - 1 + len(TRACKER_HEADERS)
+    # Columns are found by header name in the first rows; editors may add or move
+    # rows above the headers and insert columns.
     rows = sheet.iter_rows(min_row=1, values_only=True)
-    header_number = None
+    header_number = positions = None
     for number, row in enumerate(rows, start=1):
-        row = tuple(row) + (None,) * max(0, width - len(row))
-        if tuple(_text(value) for value in row[TRACKER_FIRST_COLUMN - 1:width]) == TRACKER_HEADERS:
+        positions = _tracker_columns(tuple(row))
+        if positions is not None:
             header_number = number
             break
         if number >= TRACKER_HEADER_SEARCH_ROWS:
             break
     if header_number is None:
         raise WorkbookSyncError(
-            f"'{sheet.title}' has no row with the LH Performance Tracker headers in columns D:AA."
+            f"'{sheet.title}' has no row with the LH Performance Tracker headers (Departure_Date ... Status)."
         )
 
     columns = []
     for index, header in enumerate(TRACKER_HEADERS):
-        letter = _column_letter(TRACKER_FIRST_COLUMN + index)
-        key = f"tracker_{letter}_{_header_token(header, letter)}"
-        columns.append({"key": key, "label": f"{header} ({letter})"})
+        key = f"tracker_{index + 1:02d}_{_header_token(header, str(index + 1))}"
+        columns.append({"key": key, "label": header})
 
     default_region = sheet.title if sheet.title in TRACKER_REGION_SHEETS[:4] else "Unspecified"
     records = []
     for row_number, row in enumerate(rows, start=header_number + 1):
-        row = tuple(row) + (None,) * max(0, width - len(row))
-        values = row[TRACKER_FIRST_COLUMN - 1:width]
+        row = tuple(row)
+        values = [row[p] if p is not None and p < len(row) else None for p in positions]
         if not any(_text(value) for value in values):
             continue
         # hidden column B, Org_Region; region sheets fall back to their own name
-        region = _text(row[1]).title() or default_region
+        region = (_text(row[1]).title() if len(row) > 1 else "") or default_region
         date_variants = _date_variants(values[0], region)
         origin, destination = _text(values[1]), _text(values[2])
         bags = _number(values[12])
@@ -268,6 +291,7 @@ def _parse_lccs_tracker(sheet):
             "nextEta": _time_value(values[19]),
             "remarks": _text(values[23]),
             "ndcRemarks": _text(values[20]),
+            "destRegion": _text(values[24]).title(),
             "sourceValues": {
                 column["key"]: _source_value(value) for column, value in zip(columns, values)
             },

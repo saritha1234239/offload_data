@@ -52,7 +52,7 @@ class LccsTrackerTests(unittest.TestCase):
             },
         )
 
-        self.assertEqual(len(record["values"]), 24)
+        self.assertEqual(len(record["values"]), 25)
         self.assertEqual(record["shipment_id"], "42")
         self.assertEqual(
             record["values"],
@@ -60,10 +60,11 @@ class LccsTrackerTests(unittest.TestCase):
                 "2026-11-16", "BOM", "DEL", "BOM-DEL", "123-45678901",
                 "Vendor", "NFO", "Direct", "LH 761", "09:30:00", "",
                 "Lean 1", 12, 86.5, "", 2, "3", "LH 762", "11:00",
-                "14:00", NDC_REMARK_OPTIONS[0], "", "", "Delayed",
+                "14:00", NDC_REMARK_OPTIONS[0], "", "", "Delayed", "",
             ],
         )
-        self.assertEqual(len(TRACKER_COLUMNS), 24)
+        self.assertEqual(len(TRACKER_COLUMNS), 25)
+        self.assertEqual(TRACKER_COLUMNS[24], "Dest_Region")
         self.assertEqual(TRACKER_COLUMNS[9], TRACKER_COLUMNS[18])
         self.assertEqual(TRACKER_COLUMNS[10], TRACKER_COLUMNS[19])
 
@@ -118,13 +119,13 @@ class LccsTrackerTests(unittest.TestCase):
 
         self.assertEqual(record["values"][8:11], ["LH 11", "09:00", "10:30"])
 
-    def test_csv_has_exact_24_column_header_order_including_duplicate_etd_eta(self):
+    def test_csv_has_exact_column_header_order_including_duplicate_etd_eta(self):
         csv_text = tracker_csv([map_lccs_row({"XAWBID": "awb-1"})])
         rows = list(csv.reader(StringIO(csv_text)))
 
         self.assertEqual(rows[0], list(TRACKER_COLUMNS))
-        self.assertEqual(len(rows[0]), 24)
-        self.assertEqual(len(rows[1]), 24)
+        self.assertEqual(len(rows[0]), 25)
+        self.assertEqual(len(rows[1]), 25)
 
     def test_duplicate_identical_join_rows_are_deduplicated(self):
         source = {

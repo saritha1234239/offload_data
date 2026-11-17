@@ -29,7 +29,11 @@ TRACKER_COLUMNS = (
     "LH_Pickup_date",
     "LH_Pickup_time",
     "Status",
+    # Added by the team after the original 24-column report. Workbook columns are
+    # matched by header name, so its position in the sheet does not matter.
+    "Dest_Region",
 )
+DEST_REGION_INDEX = TRACKER_COLUMNS.index("Dest_Region")
 
 
 NDC_REMARK_OPTIONS = (
@@ -116,6 +120,11 @@ SELECT
         ORDER BY scan.XAWDPICKDT DESC, scan.XAWDPICKTIME DESC
         LIMIT 1
     ) AS last_scan_time,
+    (
+        SELECT dest_hub.HUBZONE FROM mhubmst dest_hub
+        WHERE dest_hub.MHBHUBCD = awb.XAWPKUPLOC
+        LIMIT 1
+    ) AS dest_region,
     (
         SELECT region_hub.HUBZONE FROM mhubmst region_hub
         WHERE region_hub.MHBHUBCD = awb.XAWBOOKLOC
@@ -284,9 +293,11 @@ def map_lccs_row(source, manual=None):
         pickup_date,
         pickup_time,
         _value(manual, "status"),
+        # Destination hub's zone, as the LCCS cost report's "Dest Region".
+        _text(_value(source, "dest_region")).title(),
     ]
     if len(values) != len(TRACKER_COLUMNS):
-        raise TrackerDataError("Mapped tracker row does not match the 24-column report.")
+        raise TrackerDataError("Mapped tracker row does not match the tracker columns.")
     region = _text(_value(source, "org_region", "HUBZONE")).title()
     return {"shipment_id": shipment_id, "region": region, "values": values}
 

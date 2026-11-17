@@ -1,6 +1,7 @@
 import shutil
 import tempfile
 import unittest
+import unittest.mock
 from datetime import date
 from pathlib import Path
 
@@ -211,6 +212,67 @@ class TrackerJobTests(unittest.TestCase):
         sheet = self.sheet()
         self.assertEqual([sheet["D1"].value, sheet["H2"].value, sheet["S2"].value, sheet["H3"].value],
                          ["Departure_Date", "M1", 2, "M2"])
+
+    def _write_headers(self, headers):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "West"
+        for index, header in enumerate(headers):
+            sheet.cell(1, 4 + index).value = header
+        workbook.save(self.path)
+
+    def test_dest_region_in_column_g_is_filled_by_header_name(self):
+        headers = list(TRACKER_COLUMNS[:3]) + ["Dest_region"] + list(TRACKER_COLUMNS[3:24])
+        self._write_headers(headers)
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                source_rows=[dict(source(1, "M1"), dest_region="SOUTH")])
+        workbook = openpyxl.load_workbook(self.path)
+        sheet = workbook["West"]
+        self.assertEqual([sheet["F2"].value, sheet["G2"].value, sheet["H2"].value, sheet["I2"].value],
+                         ["DEL", "South", "BOM-DEL", "M1"])
+        workbook["West"]["T2"] = 3  # Offloaded bags, shifted one column right by Dest_region
+        workbook["West"]["AB2"] = "Delayed"
+        workbook.save(self.path)
+
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                source_rows=[dict(source(1, "M1"), dest_region="SOUTH")])
+        sheet = self.sheet()
+        self.assertEqual([sheet["T2"].value, sheet["AB2"].value], [3, "Delayed"])
+        self.assertFalse(sheet["T2"].protection.locked)
+        self.assertTrue(sheet["G2"].protection.locked)
+        validations = {str(v.formula1).lstrip("="): str(v.sqref) for v in sheet.data_validations.dataValidation}
+        self.assertEqual(validations, {"NDC_Remarks_Options": "Y2:Y5000", '"Ontime,Delayed"': "AB2:AB5000"})
+        record = parse_workbook(self.path.read_bytes())["records"][0]
+        self.assertEqual((record["mawb"], record["offloadedBags"], record["destRegion"]), ("M1", 3, "South"))
+
+    def test_sheet_without_dest_region_gets_it_after_dest(self):
+        self._write_headers(TRACKER_COLUMNS[:24])
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                source_rows=[dict(source(1, "M1"), dest_region="NORTH")])
+        sheet = self.sheet()
+        self.assertEqual([sheet["G1"].value, sheet["G2"].value, sheet["I2"].value],
+                         ["Dest_Region", "North", "M1"])
+
+    def test_locked_workbook_is_retried(self):
+        from lccs_tracker_job import WorkbookLockedError, refresh_with_retry
+        calls = []
+
+        def locked_then_ok(*args):
+            calls.append(1)
+            if len(calls) < 3:
+                raise WorkbookLockedError("open in Excel")
+            return {"total": 1}
+
+        waits = []
+        with unittest.mock.patch("lccs_tracker_job.refresh", side_effect=locked_then_ok):
+            result = refresh_with_retry(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                                        attempts=5, wait_seconds=300, sleep=waits.append)
+            self.assertEqual((result, len(calls), waits), ({"total": 1}, 3, [300, 300]))
+        with unittest.mock.patch("lccs_tracker_job.refresh", side_effect=WorkbookLockedError("open")) as job:
+            with self.assertRaises(WorkbookLockedError):
+                refresh_with_retry(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                                   attempts=2, wait_seconds=1, sleep=lambda _seconds: None)
+            self.assertEqual(job.call_count, 2)
 
     def test_duplicate_ids_across_sheets_stop_refresh(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
