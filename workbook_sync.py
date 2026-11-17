@@ -179,6 +179,7 @@ def _is_header_row(values):
 
 
 TRACKER_SHEET = "LH Performance Tracker"
+TRACKER_REGION_SHEETS = ("North", "West", "East", "South", "Unassigned")
 TRACKER_HEADER_ROW = 4
 TRACKER_FIRST_COLUMN = 4  # D
 TRACKER_HEADERS = (
@@ -218,13 +219,15 @@ def _parse_lccs_tracker(sheet):
         key = f"tracker_{letter}_{_header_token(header, letter)}"
         columns.append({"key": key, "label": f"{header} ({letter})"})
 
+    default_region = sheet.title if sheet.title in TRACKER_REGION_SHEETS[:4] else "Unspecified"
     records = []
     for row_number, row in enumerate(rows, start=TRACKER_HEADER_ROW + 1):
         row = tuple(row) + (None,) * max(0, width - len(row))
         values = row[TRACKER_FIRST_COLUMN - 1:width]
         if not any(_text(value) for value in values):
             continue
-        region = _text(row[1]).title() or "Unspecified"  # hidden column B, Org_Region
+        # hidden column B, Org_Region; region sheets fall back to their own name
+        region = _text(row[1]).title() or default_region
         date_variants = _date_variants(values[0], region)
         origin, destination = _text(values[1]), _text(values[2])
         bags = _number(values[12])
@@ -280,10 +283,19 @@ def parse_workbook(workbook_bytes):
         raise WorkbookSyncError("The download is not a readable Excel workbook.") from exc
 
     sheets = {_normalize_name(sheet.title): sheet for sheet in workbook.worksheets}
-    tracker = sheets.get(_normalize_name(TRACKER_SHEET))
-    if tracker is not None and not any(_normalize_name(name) in sheets for name in EXPECTED_SHEETS):
+    trackers = [
+        sheets[_normalize_name(name)]
+        for name in (TRACKER_SHEET,) + TRACKER_REGION_SHEETS
+        if _normalize_name(name) in sheets
+    ]
+    if trackers and not any(_normalize_name(name) in sheets for name in EXPECTED_SHEETS):
+        data = {"columns": [], "records": [], "sources": []}
         try:
-            data = _parse_lccs_tracker(tracker)
+            for tracker in trackers:
+                parsed = _parse_lccs_tracker(tracker)
+                data["columns"] = parsed["columns"]
+                data["records"].extend(parsed["records"])
+                data["sources"].extend(parsed["sources"])
         finally:
             workbook.close()
         if not data["records"]:

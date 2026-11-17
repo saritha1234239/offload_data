@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import openpyxl
+from openpyxl.worksheet.datavalidation import DataValidation
 
 from lccs_connection import CONFIG_DIRECTORY, LccsConfigError, connect
 from lccs_tracker import (
@@ -32,7 +33,10 @@ DEFAULT_WORKBOOK = Path(__file__).resolve().parent / "LH Performance Tracker.xls
 JOB_CONFIG_PATH = CONFIG_DIRECTORY / "lccs-tracker.json"
 LOG_PATH = CONFIG_DIRECTORY / "lccs-tracker.log"
 TASK_NAME = "LHPerformanceTrackerRefresh"
-SHEET_NAME = "LH Performance Tracker"
+SHEET_NAME = "LH Performance Tracker"  # original single-sheet layout; migrated to region sheets
+REGION_SHEETS = ("North", "West", "East", "South")
+UNASSIGNED_SHEET = "Unassigned"  # only created if LCCS returns a hub outside the four regions
+TRACKER_SHEETS = (SHEET_NAME,) + REGION_SHEETS + (UNASSIGNED_SHEET,)
 HEADER_ROW = 4
 FIRST_DATA_ROW = 5
 FIRST_COLUMN = 4  # D
@@ -84,29 +88,49 @@ def fetch_lccs_rows(from_date, to_date, hub_code=None, connection=None):
             connection.close()
 
 
-def _sheet(workbook):
-    if SHEET_NAME not in workbook.sheetnames:
-        raise TrackerJobError(f"Workbook has no '{SHEET_NAME}' sheet.")
-    sheet = workbook[SHEET_NAME]
+def _check_headers(sheet):
     headers = [sheet.cell(HEADER_ROW, FIRST_COLUMN + i).value for i in range(len(TRACKER_COLUMNS))]
     if headers != list(TRACKER_COLUMNS):
-        raise TrackerJobError("Tracker headers in D4:AA4 do not match the expected 24 columns.")
+        raise TrackerJobError(f"'{sheet.title}' headers in D4:AA4 do not match the expected 24 columns.")
     return sheet
 
 
-def read_existing(sheet):
+def tracker_sheets(workbook):
+    """Every tracker sheet present: the original single sheet and/or the region sheets."""
+    sheets = [_check_headers(workbook[name]) for name in TRACKER_SHEETS if name in workbook.sheetnames]
+    if not sheets:
+        raise TrackerJobError(
+            f"Workbook has no tracker sheet ({', '.join(REGION_SHEETS)} or '{SHEET_NAME}')."
+        )
+    return sheets
+
+
+def region_sheet_name(region):
+    region = str(region or "").strip().title()
+    return region if region in REGION_SHEETS else UNASSIGNED_SHEET
+
+
+def read_existing(sheet, existing=None):
     """Return {shipment_id: (region, values)} for rows that carry an LCCS_ID."""
-    existing = {}
+    existing = {} if existing is None else existing
+    default_region = sheet.title if sheet.title in REGION_SHEETS else ""
     for row in range(FIRST_DATA_ROW, sheet.max_row + 1):
         shipment_id = sheet.cell(row, ID_COLUMN).value
         values = [sheet.cell(row, FIRST_COLUMN + i).value for i in range(len(TRACKER_COLUMNS))]
         if shipment_id in (None, ""):
             if any(value not in (None, "") for value in values):
                 raise TrackerJobError(
-                    f"Row {row} has data but no {ID_HEADER}; add rows only through the refresh job."
+                    f"'{sheet.title}' row {row} has data but no {ID_HEADER}; "
+                    "add rows only through the refresh job."
                 )
             continue
-        existing[str(shipment_id)] = (sheet.cell(row, REGION_COLUMN).value or "", values)
+        shipment_id = str(shipment_id)
+        if shipment_id in existing:
+            raise TrackerJobError(
+                f"{ID_HEADER} {shipment_id} appears more than once ('{sheet.title}' row {row}); "
+                "delete the duplicate row before refreshing."
+            )
+        existing[shipment_id] = (sheet.cell(row, REGION_COLUMN).value or default_region, values)
     return existing
 
 
@@ -168,6 +192,43 @@ def write_rows(sheet, rows):
     sheet.auto_filter.ref = f"D{HEADER_ROW}:AA{end_row}"
 
 
+def _new_region_sheet(workbook, title, template):
+    """Copy the template layout (title, headers, widths, styles) into an empty sheet."""
+    sheet = workbook.copy_worksheet(template)
+    sheet.title = title
+    for row in range(FIRST_DATA_ROW, sheet.max_row + 1):
+        for column in range(1, sheet.max_column + 1):
+            sheet.cell(row, column).value = None
+    sheet.cell(2, FIRST_COLUMN).value = f"LH Performance Tracker - {title}"
+    sheet.freeze_panes = template.freeze_panes
+    validation = DataValidation(type="list", formula1="=NDC_Remarks_Options", allow_blank=True)
+    validation.add(f"X{FIRST_DATA_ROW}:X{MIN_DROPDOWN_ROWS}")
+    sheet.add_data_validation(validation)
+    return sheet
+
+
+def write_region_sheets(workbook, rows, sheets):
+    """Split rows into North/West/East/South sheets and retire the single-sheet layout."""
+    template = sheets[0]
+    by_sheet = {name: {} for name in REGION_SHEETS}
+    for shipment_id, (region, values) in rows.items():
+        by_sheet.setdefault(region_sheet_name(region), {})[shipment_id] = (region, values)
+    for name, sheet_rows in by_sheet.items():
+        if name == UNASSIGNED_SHEET and not sheet_rows and name not in workbook.sheetnames:
+            continue
+        if name not in workbook.sheetnames:
+            _new_region_sheet(workbook, name, template)
+        write_rows(workbook[name], sheet_rows)
+    for name in (SHEET_NAME, UNASSIGNED_SHEET):
+        if name in workbook.sheetnames and not (name == UNASSIGNED_SHEET and by_sheet.get(name)):
+            workbook.remove(workbook[name])
+    order = [workbook[name] for name in REGION_SHEETS + (UNASSIGNED_SHEET,) if name in workbook.sheetnames]
+    workbook._sheets = order + [sheet for sheet in workbook.worksheets if sheet not in order]
+    workbook.active = 0
+    for sheet in workbook.worksheets:
+        sheet.sheet_view.tabSelected = sheet is order[0]
+
+
 def save_atomically(workbook, path):
     path = Path(path)
     descriptor, temporary = tempfile.mkstemp(prefix=".lh-tracker-", suffix=".xlsx", dir=path.parent)
@@ -189,12 +250,14 @@ def refresh(workbook_path, from_date, to_date, hub_code=None, source_rows=None):
     if not workbook_path.is_file():
         raise TrackerJobError(f"Tracker workbook not found: {workbook_path}")
     workbook = openpyxl.load_workbook(workbook_path)
-    sheet = _sheet(workbook)
-    existing = read_existing(sheet)
+    sheets = tracker_sheets(workbook)
+    existing = {}
+    for sheet in sheets:
+        read_existing(sheet, existing)
     if source_rows is None:
         source_rows = fetch_lccs_rows(from_date, to_date, hub_code)
     merged, added, updated = merge(existing, source_rows)
-    write_rows(sheet, merged)
+    write_region_sheets(workbook, merged, sheets)
     save_atomically(workbook, workbook_path)
     return {"added": added, "updated": updated, "total": len(merged)}
 
@@ -210,7 +273,7 @@ def set_workbook(path):
     path = Path(path).expanduser().resolve()
     if not path.is_file():
         raise TrackerJobError(f"Tracker workbook not found: {path}")
-    _sheet(openpyxl.load_workbook(path, read_only=True))
+    tracker_sheets(openpyxl.load_workbook(path))
     CONFIG_DIRECTORY.mkdir(parents=True, exist_ok=True)
     JOB_CONFIG_PATH.write_text(json.dumps({"workbookPath": str(path)}, indent=2), encoding="utf-8")
     print(f"Tracker workbook saved: {path}")

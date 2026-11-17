@@ -173,6 +173,13 @@ def send_email(snapshot):
                 smtp.sendmail(sender, envelope_recipients, message.as_string())
     except DeliveryError:
         raise
+    except smtplib.SMTPAuthenticationError as exc:
+        reply = exc.smtp_error.decode("utf-8", "replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
+        raise DeliveryError(
+            f"{host}:{port} rejected the sign-in for SMTP_USERNAME (server said {exc.smtp_code}: {reply.strip()}). "
+            "Check SMTP_USERNAME is the full mailbox address and SMTP_PASSWORD is current; for Microsoft 365, "
+            "SMTP AUTH must be enabled for that mailbox, and accounts with MFA need an app password."
+        ) from exc
     except (OSError, smtplib.SMTPException) as exc:
         raise DeliveryError(
             f"SMTP delivery failed ({type(exc).__name__}); check relay settings and access."

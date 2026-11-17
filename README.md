@@ -53,6 +53,13 @@ deletes rows outside the refreshed dates. Close the workbook in Excel before a
 refresh. Rows typed without an `LCCS_ID`, or an `NDC_Remarks` value not in the
 list, stop the refresh without changing the file.
 
+Rows are split into four sheets, `North`, `West`, `East` and `South`, by the
+origin hub's LCCS zone (`mhubmst.HUBZONE`, kept in hidden column B). A hub with
+no zone goes to an `Unassigned` sheet, which disappears once it is empty. If a
+hub's zone changes, its rows and team entries move to the new sheet. A workbook
+in the older single `LH Performance Tracker` sheet layout is split on its next
+refresh. The dashboard reads all region sheets.
+
 The query also reproduces `Multijoins::skipTestingAWB()` (MAWBs with dockets for
 test client `206324` are excluded) and the report's NFO rule (any non-cancelled
 `xdockethdr` docket on the MAWB with `XDKTPROMODE = 'NFO'`). As in the PHP

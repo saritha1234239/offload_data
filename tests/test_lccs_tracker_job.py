@@ -43,8 +43,8 @@ class TrackerJobTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.folder)
 
-    def sheet(self):
-        return openpyxl.load_workbook(self.path)["LH Performance Tracker"]
+    def sheet(self, name="West"):
+        return openpyxl.load_workbook(self.path)[name]
 
     def test_first_refresh_writes_rows_with_hidden_id(self):
         result = refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
@@ -60,7 +60,7 @@ class TrackerJobTests(unittest.TestCase):
     def test_refresh_keeps_team_entries_and_updates_lccs_columns(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
         workbook = openpyxl.load_workbook(self.path)
-        sheet = workbook["LH Performance Tracker"]
+        sheet = workbook["West"]
         sheet["N5"] = "11:30"
         sheet["S5"] = 2
         sheet["X5"] = NDC_REMARK_OPTIONS[4]
@@ -88,7 +88,7 @@ class TrackerJobTests(unittest.TestCase):
     def test_invalid_ndc_typed_in_workbook_stops_refresh_without_overwriting(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
         workbook = openpyxl.load_workbook(self.path)
-        workbook["LH Performance Tracker"]["X5"] = "typo"
+        workbook["West"]["X5"] = "typo"
         workbook.save(self.path)
         with self.assertRaisesRegex(TrackerJobError, "LCCS_ID 1"):
             refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
@@ -111,7 +111,7 @@ class TrackerJobTests(unittest.TestCase):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
                 source_rows=[source(1, "M1"), source(2, "M2", etd="13:30:00")])
         workbook = openpyxl.load_workbook(self.path)
-        sheet = workbook["LH Performance Tracker"]
+        sheet = workbook["West"]
         sheet["S5"] = 1
         sheet["T5"] = 2
         sheet["X5"] = NDC_REMARK_OPTIONS[12]
@@ -119,7 +119,7 @@ class TrackerJobTests(unittest.TestCase):
 
         data = parse_workbook(self.path.read_bytes())
         first, second = data["records"]
-        self.assertEqual(data["sources"][0]["name"], "LH Performance Tracker")
+        self.assertEqual({s["name"]: s["rows"] for s in data["sources"]}["West"], 2)
         self.assertEqual(
             (first["date"], first["region"], first["lane"], first["mawb"], first["bags"],
              first["offloadedBags"], first["impactedCons"], first["ndcRemarks"], first["sourceRow"]),
@@ -141,6 +141,54 @@ class TrackerJobTests(unittest.TestCase):
     def test_dashboard_parser_rejects_tracker_without_rows(self):
         with self.assertRaisesRegex(WorkbookSyncError, "no dashboard rows"):
             parse_workbook(self.path.read_bytes())
+
+    def test_rows_are_split_into_four_region_sheets(self):
+        rows = [dict(source(1, "W1"), org_region="WEST"), dict(source(2, "N1"), org_region="NORTH"),
+                dict(source(3, "S1"), org_region="SOUTH"), dict(source(4, "S2"), org_region="SOUTH")]
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=rows)
+        workbook = openpyxl.load_workbook(self.path)
+        self.assertEqual(workbook.sheetnames, ["North", "West", "East", "South"])
+        self.assertEqual(workbook["South"]["D2"].value, "LH Performance Tracker - South")
+        self.assertEqual([workbook["South"]["H5"].value, workbook["South"]["H6"].value], ["S1", "S2"])
+        self.assertEqual(workbook["North"]["H5"].value, "N1")
+        self.assertIsNone(workbook["East"]["H5"].value)
+        self.assertEqual(workbook["East"]["D4"].value, "Departure_Date")
+        self.assertTrue(workbook["East"].column_dimensions["C"].hidden)
+        for name in ("North", "West", "East", "South"):
+            formulas = [v.formula1 for v in workbook[name].data_validations.dataValidation]
+            self.assertEqual(formulas, ["=NDC_Remarks_Options"], name)
+
+        data = parse_workbook(self.path.read_bytes())
+        self.assertEqual(sorted(r["region"] for r in data["records"]), ["North", "South", "South", "West"])
+        self.assertEqual([s["name"] for s in data["sources"]], ["North", "West", "East", "South"])
+
+    def test_team_entries_survive_split_and_region_change(self):
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
+        workbook = openpyxl.load_workbook(self.path)
+        workbook["West"]["S5"] = 4
+        workbook.save(self.path)
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                source_rows=[dict(source(1, "M1"), org_region="EAST")])
+        workbook = openpyxl.load_workbook(self.path)
+        self.assertIsNone(workbook["West"]["H5"].value)
+        self.assertEqual([workbook["East"]["H5"].value, workbook["East"]["S5"].value], ["M1", 4])
+
+    def test_unknown_region_goes_to_unassigned_sheet(self):
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                source_rows=[dict(source(1, "M1"), org_region=None)])
+        self.assertEqual(self.sheet("Unassigned")["H5"].value, "M1")
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                source_rows=[dict(source(1, "M1"), org_region="WEST")])
+        self.assertNotIn("Unassigned", openpyxl.load_workbook(self.path).sheetnames)
+
+    def test_duplicate_ids_across_sheets_stop_refresh(self):
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
+        workbook = openpyxl.load_workbook(self.path)
+        workbook["North"]["C5"] = "1"
+        workbook["North"]["H5"] = "M1"
+        workbook.save(self.path)
+        with self.assertRaisesRegex(TrackerJobError, "more than once"):
+            refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
 
     def test_query_placeholders_convert_to_pymysql_style(self):
         converted = mysql_query(LCCS_TRACKER_QUERY)
