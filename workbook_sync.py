@@ -181,6 +181,7 @@ def _is_header_row(values):
 TRACKER_SHEET = "LH Performance Tracker"
 TRACKER_REGION_SHEETS = ("North", "West", "East", "South", "Unassigned")
 TRACKER_HEADER_ROW = 4
+TRACKER_HEADER_SEARCH_ROWS = 10
 TRACKER_FIRST_COLUMN = 4  # D
 TRACKER_HEADERS = (
     "Departure_Date", "Org", "Dest", "Lane", "Mawb(with prefix)", "Vendor_name",
@@ -205,13 +206,21 @@ def _parse_lccs_tracker(sheet):
     Every tracker row is a dispatched air MAWB from LCCS, and the team records
     offloads as exceptions, so a blank Offloaded bags cell counts as 0.
     """
-    rows = sheet.iter_rows(min_row=TRACKER_HEADER_ROW, values_only=True)
-    header_row = next(rows, None) or ()
+    # Headers are in row 4 of the template, but editors may delete rows above them.
     width = TRACKER_FIRST_COLUMN - 1 + len(TRACKER_HEADERS)
-    header_row = tuple(header_row) + (None,) * max(0, width - len(header_row))
-    headers = tuple(_text(value) for value in header_row[TRACKER_FIRST_COLUMN - 1:width])
-    if headers != TRACKER_HEADERS:
-        raise WorkbookSyncError(f"'{sheet.title}' headers in D4:AA4 do not match the LH Performance Tracker layout.")
+    rows = sheet.iter_rows(min_row=1, values_only=True)
+    header_number = None
+    for number, row in enumerate(rows, start=1):
+        row = tuple(row) + (None,) * max(0, width - len(row))
+        if tuple(_text(value) for value in row[TRACKER_FIRST_COLUMN - 1:width]) == TRACKER_HEADERS:
+            header_number = number
+            break
+        if number >= TRACKER_HEADER_SEARCH_ROWS:
+            break
+    if header_number is None:
+        raise WorkbookSyncError(
+            f"'{sheet.title}' has no row with the LH Performance Tracker headers in columns D:AA."
+        )
 
     columns = []
     for index, header in enumerate(TRACKER_HEADERS):
@@ -221,7 +230,7 @@ def _parse_lccs_tracker(sheet):
 
     default_region = sheet.title if sheet.title in TRACKER_REGION_SHEETS[:4] else "Unspecified"
     records = []
-    for row_number, row in enumerate(rows, start=TRACKER_HEADER_ROW + 1):
+    for row_number, row in enumerate(rows, start=header_number + 1):
         row = tuple(row) + (None,) * max(0, width - len(row))
         values = row[TRACKER_FIRST_COLUMN - 1:width]
         if not any(_text(value) for value in values):

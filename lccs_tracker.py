@@ -99,6 +99,24 @@ SELECT
         WHERE cons.XAIRWAYBILLNO = awb.XAWBILLNO
     ) AS total_cons,
     (
+        SELECT scan.XAWDPICKDT FROM xawbdtl scan
+        WHERE scan.XAIRWAYBILLNO = awb.XAWBILLNO
+          AND scan.XAWDPICKDT IS NOT NULL
+          AND scan.XAWDPICKDT <> ''
+          AND scan.XAWDPICKDT <> '0000-00-00'
+        ORDER BY scan.XAWDPICKDT DESC, scan.XAWDPICKTIME DESC
+        LIMIT 1
+    ) AS last_scan_date,
+    (
+        SELECT scan.XAWDPICKTIME FROM xawbdtl scan
+        WHERE scan.XAIRWAYBILLNO = awb.XAWBILLNO
+          AND scan.XAWDPICKDT IS NOT NULL
+          AND scan.XAWDPICKDT <> ''
+          AND scan.XAWDPICKDT <> '0000-00-00'
+        ORDER BY scan.XAWDPICKDT DESC, scan.XAWDPICKTIME DESC
+        LIMIT 1
+    ) AS last_scan_time,
+    (
         SELECT region_hub.HUBZONE FROM mhubmst region_hub
         WHERE region_hub.MHBHUBCD = awb.XAWBOOKLOC
         LIMIT 1
@@ -224,6 +242,14 @@ def map_lccs_row(source, manual=None):
     total_cons = _value(source, "total_cons")
     if total_cons in ("", None, 0):
         total_cons = _value(manual, "total_cons")
+    # LH pickup = latest linehaul pickup scan (Multijoins::lccscostQuery LAST_SCAN_DATE/TIME).
+    pickup_date = _date_text(_value(source, "last_scan_date"))
+    if pickup_date.startswith("0000"):
+        pickup_date = ""
+    pickup_time = _text(_value(source, "last_scan_time")) if pickup_date else ""
+    if not pickup_date:
+        pickup_date = _value(manual, "lh_pickup_date")
+        pickup_time = _value(manual, "lh_pickup_time")
     scheduled_etd = _override(manual, "scheduled_etd_override", etd)
     scheduled_eta = _override(manual, "scheduled_eta_override", eta)
     impacted_cons = _value(manual, "impacted_cons")
@@ -255,8 +281,8 @@ def map_lccs_row(source, manual=None):
         _value(manual, "revised_etd"),
         _value(manual, "revised_eta"),
         ndc_remarks,
-        _value(manual, "lh_pickup_date"),
-        _value(manual, "lh_pickup_time"),
+        pickup_date,
+        pickup_time,
         _value(manual, "status"),
     ]
     if len(values) != len(TRACKER_COLUMNS):

@@ -51,30 +51,29 @@ class TrackerJobTests(unittest.TestCase):
                          source_rows=[source(2, "M2"), source(1, "M1")])
         self.assertEqual(result, {"added": 2, "updated": 0, "removed": 0, "total": 2})
         sheet = self.sheet()
-        self.assertEqual(sheet["C4"].value, "LCCS_ID")
+        self.assertEqual(sheet["C1"].value, "LCCS_ID")
         self.assertTrue(sheet.column_dimensions["C"].hidden)
-        self.assertEqual([sheet["C5"].value, sheet["C6"].value], ["1", "2"])
-        self.assertEqual(sheet["H5"].value, "M1")
-        self.assertEqual(sheet["O5"].value, "Prime")
+        self.assertEqual([sheet["C2"].value, sheet["C3"].value], ["1", "2"])
+        self.assertEqual(sheet["H2"].value, "M1")
+        self.assertEqual(sheet["O2"].value, "Prime")
 
     def test_refresh_keeps_team_entries_and_updates_lccs_columns(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
         workbook = openpyxl.load_workbook(self.path)
         sheet = workbook["West"]
-        sheet["S5"] = 2
-        sheet["X5"] = NDC_REMARK_OPTIONS[4]
-        sheet["Y5"] = "2026-11-16"
-        sheet["AA5"] = "Closed"
+        sheet["S2"] = 2
+        sheet["X2"] = NDC_REMARK_OPTIONS[4]
+        sheet["AA2"] = "Closed"
         workbook.save(self.path)
 
         result = refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
                          source_rows=[source(1, "M1", flight="LH 9"), source(3, "M3")])
         self.assertEqual(result, {"added": 1, "updated": 1, "removed": 0, "total": 2})
         sheet = self.sheet()
-        self.assertEqual(sheet["L5"].value, "LH 9")
+        self.assertEqual(sheet["L2"].value, "LH 9")
         self.assertEqual(
-            [sheet["N5"].value, sheet["R5"].value, sheet["S5"].value, sheet["X5"].value, sheet["Y5"].value, sheet["AA5"].value],
-            ["10:15:00", 4, 2, NDC_REMARK_OPTIONS[4], "2026-11-16", "Closed"],
+            [sheet["N2"].value, sheet["R2"].value, sheet["S2"].value, sheet["X2"].value, sheet["AA2"].value],
+            ["10:15:00", 4, 2, NDC_REMARK_OPTIONS[4], "Closed"],
         )
 
     def test_rows_older_than_the_window_are_removed(self):
@@ -83,16 +82,16 @@ class TrackerJobTests(unittest.TestCase):
         result = refresh(self.path, date(2026, 11, 15), date(2026, 11, 16), source_rows=[source(2, "NEW")])
         self.assertEqual(result["removed"], 1)
         sheet = self.sheet()
-        self.assertEqual([sheet["H5"].value, sheet["H6"].value, sheet["H7"].value], ["KEEP", "NEW", None])
+        self.assertEqual([sheet["H2"].value, sheet["H3"].value, sheet["H4"].value], ["KEEP", "NEW", None])
 
     def test_invalid_ndc_typed_in_workbook_stops_refresh_without_overwriting(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
         workbook = openpyxl.load_workbook(self.path)
-        workbook["West"]["X5"] = "typo"
+        workbook["West"]["X2"] = "typo"
         workbook.save(self.path)
         with self.assertRaisesRegex(TrackerJobError, "LCCS_ID 1"):
             refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
-        self.assertEqual(self.sheet()["X5"].value, "typo")
+        self.assertEqual(self.sheet()["X2"].value, "typo")
 
     def test_rows_typed_without_id_are_rejected(self):
         workbook = openpyxl.load_workbook(self.path)
@@ -104,7 +103,7 @@ class TrackerJobTests(unittest.TestCase):
     def test_region_is_written_to_hidden_column_b(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
         sheet = self.sheet()
-        self.assertEqual([sheet["B4"].value, sheet["B5"].value], ["Org_Region", "West"])
+        self.assertEqual([sheet["B1"].value, sheet["B2"].value], ["Org_Region", "West"])
         self.assertTrue(sheet.column_dimensions["B"].hidden)
 
     def test_dashboard_parser_reads_refreshed_tracker(self):
@@ -112,9 +111,9 @@ class TrackerJobTests(unittest.TestCase):
                 source_rows=[source(1, "M1"), source(2, "M2", etd="13:30:00")])
         workbook = openpyxl.load_workbook(self.path)
         sheet = workbook["West"]
-        sheet["S5"] = 1
-        sheet["T5"] = 2
-        sheet["X5"] = NDC_REMARK_OPTIONS[12]
+        sheet["S2"] = 1
+        sheet["T2"] = 2
+        sheet["X2"] = NDC_REMARK_OPTIONS[12]
         workbook.save(self.path)
 
         data = parse_workbook(self.path.read_bytes())
@@ -123,7 +122,7 @@ class TrackerJobTests(unittest.TestCase):
         self.assertEqual(
             (first["date"], first["region"], first["lane"], first["mawb"], first["bags"],
              first["offloadedBags"], first["impactedCons"], first["ndcRemarks"], first["sourceRow"]),
-            ("2026-11-16", "West", "BOM-DEL", "M1", 3, 1, 2, NDC_REMARK_OPTIONS[12], 5),
+            ("2026-11-16", "West", "BOM-DEL", "M1", 3, 1, 2, NDC_REMARK_OPTIONS[12], 2),
         )
         self.assertAlmostEqual(first["etd"], 8 / 24)
         self.assertAlmostEqual(second["etd"], 13.5 / 24)
@@ -135,7 +134,7 @@ class TrackerJobTests(unittest.TestCase):
                 source_rows=[source(1, "M1", day=datetime(2026, 10, 20, 0, 0)),
                              source(2, "M2", day="2026-10-21T00:00:00")])
         sheet = self.sheet()
-        self.assertEqual([sheet["D5"].value, sheet["D6"].value], ["2026-10-20", "2026-10-21"])
+        self.assertEqual([sheet["D2"].value, sheet["D3"].value], ["2026-10-20", "2026-10-21"])
         self.assertEqual(_date_variants("2026-10-20T00:00:00", "North"), ["2026-10-20"])
 
     def test_dashboard_parser_rejects_tracker_without_rows(self):
@@ -148,15 +147,16 @@ class TrackerJobTests(unittest.TestCase):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=rows)
         workbook = openpyxl.load_workbook(self.path)
         self.assertEqual(workbook.sheetnames, ["North", "West", "East", "South"])
-        self.assertEqual(workbook["South"]["D2"].value, "LH Performance Tracker - South")
-        self.assertEqual([workbook["South"]["H5"].value, workbook["South"]["H6"].value], ["S1", "S2"])
-        self.assertEqual(workbook["North"]["H5"].value, "N1")
-        self.assertIsNone(workbook["East"]["H5"].value)
-        self.assertEqual(workbook["East"]["D4"].value, "Departure_Date")
+        self.assertEqual(workbook["South"]["D1"].value, "Departure_Date")  # title rows removed
+        self.assertEqual(workbook["South"].freeze_panes, "D2")
+        self.assertEqual([workbook["South"]["H2"].value, workbook["South"]["H3"].value], ["S1", "S2"])
+        self.assertEqual(workbook["North"]["H2"].value, "N1")
+        self.assertIsNone(workbook["East"]["H2"].value)
+        self.assertEqual(workbook["East"]["D1"].value, "Departure_Date")
         self.assertTrue(workbook["East"].column_dimensions["C"].hidden)
         for name in ("North", "West", "East", "South"):
             validations = {v.formula1: str(v.sqref) for v in workbook[name].data_validations.dataValidation}
-            self.assertEqual(validations, {"=NDC_Remarks_Options": "X5:X5000", '"Ontime,Delayed"': "AA5:AA5000"}, name)
+            self.assertEqual(validations, {"=NDC_Remarks_Options": "X2:X5000", '"Ontime,Delayed"': "AA2:AA5000"}, name)
 
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=rows)
         validations = openpyxl.load_workbook(self.path)["South"].data_validations.dataValidation
@@ -169,18 +169,18 @@ class TrackerJobTests(unittest.TestCase):
     def test_team_entries_survive_split_and_region_change(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
         workbook = openpyxl.load_workbook(self.path)
-        workbook["West"]["S5"] = 4
+        workbook["West"]["S2"] = 4
         workbook.save(self.path)
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
                 source_rows=[dict(source(1, "M1"), org_region="EAST")])
         workbook = openpyxl.load_workbook(self.path)
-        self.assertIsNone(workbook["West"]["H5"].value)
-        self.assertEqual([workbook["East"]["H5"].value, workbook["East"]["S5"].value], ["M1", 4])
+        self.assertIsNone(workbook["West"]["H2"].value)
+        self.assertEqual([workbook["East"]["H2"].value, workbook["East"]["S2"].value], ["M1", 4])
 
     def test_unknown_region_goes_to_unassigned_sheet(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
                 source_rows=[dict(source(1, "M1"), org_region=None)])
-        self.assertEqual(self.sheet("Unassigned")["H5"].value, "M1")
+        self.assertEqual(self.sheet("Unassigned")["H2"].value, "M1")
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
                 source_rows=[dict(source(1, "M1"), org_region="WEST")])
         self.assertNotIn("Unassigned", openpyxl.load_workbook(self.path).sheetnames)
@@ -191,9 +191,26 @@ class TrackerJobTests(unittest.TestCase):
         self.assertTrue(sheet.protection.sheet)
         self.assertTrue(sheet.protection.deleteRows)
         self.assertFalse(sheet.protection.autoFilter)
-        self.assertTrue(sheet["H5"].protection.locked)  # LCCS column (MAWB)
-        self.assertFalse(sheet["S5"].protection.locked)  # Offloaded bags
-        self.assertFalse(sheet["AA5"].protection.locked)  # Status
+        self.assertTrue(sheet["H2"].protection.locked)  # LCCS column (MAWB)
+        self.assertFalse(sheet["S2"].protection.locked)  # Offloaded bags
+        self.assertFalse(sheet["AA2"].protection.locked)  # Status
+
+    def test_rows_added_above_the_headers_are_parsed_then_removed(self):
+        refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
+        workbook = openpyxl.load_workbook(self.path)
+        workbook["West"].insert_rows(1, 2)  # an editor added a title above the headers
+        workbook["West"]["D1"] = "My title"
+        workbook["West"]["S4"] = 2  # team entry on M1, now in row 4
+        workbook.save(self.path)
+        data = parse_workbook(self.path.read_bytes())
+        self.assertEqual([(r["mawb"], r["sourceRow"]) for r in data["records"]], [("M1", 4)])
+
+        result = refresh(self.path, date(2026, 11, 16), date(2026, 11, 16),
+                         source_rows=[source(1, "M1"), source(2, "M2")])
+        self.assertEqual(result["added"], 1)
+        sheet = self.sheet()
+        self.assertEqual([sheet["D1"].value, sheet["H2"].value, sheet["S2"].value, sheet["H3"].value],
+                         ["Departure_Date", "M1", 2, "M2"])
 
     def test_duplicate_ids_across_sheets_stop_refresh(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])

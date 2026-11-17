@@ -92,6 +92,16 @@ class LccsTrackerTests(unittest.TestCase):
         self.assertIn("awb.XAWSARVTIME AS XAWSARVTIME", LCCS_TRACKER_QUERY)
         self.assertIn("COUNT(DISTINCT cons.XAWDDKTID)", LCCS_TRACKER_QUERY)
 
+    def test_lh_pickup_is_the_latest_linehaul_pickup_scan(self):
+        from datetime import datetime
+        values = map_lccs_row({"XAWBID": "1", "last_scan_date": datetime(2026, 11, 17, 0, 0),
+                               "last_scan_time": "13:55"})["values"]
+        self.assertEqual(values[21:23], ["2026-11-17", "13:55"])
+        not_picked = map_lccs_row({"XAWBID": "2", "last_scan_date": "0000-00-00 00:00:00",
+                                   "last_scan_time": ""})["values"]
+        self.assertEqual(not_picked[21:23], ["", ""])
+        self.assertIn("ORDER BY scan.XAWDPICKDT DESC, scan.XAWDPICKTIME DESC", LCCS_TRACKER_QUERY)
+
     def test_scheduled_field_overrides_survive_source_refresh_mapping(self):
         record = map_lccs_row(
             {

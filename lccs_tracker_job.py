@@ -54,7 +54,8 @@ STATUS_OPTIONS = ("Ontime", "Delayed")
 STATUS_FORMULA = '"' + ",".join(STATUS_OPTIONS) + '"'
 
 # Tracker column index (0-based within D:AA) -> manual key understood by map_lccs_row.
-# ETA (XAWSARVTIME) and Total Cons (docket count) come from LCCS on every refresh.
+# ETA (XAWSARVTIME), Total Cons (docket count) and LH pickup date/time (latest
+# linehaul pickup scan) come from LCCS on every refresh.
 MANUAL_COLUMNS = {
     15: "offloaded_bags",
     16: "impacted_cons",
@@ -62,8 +63,6 @@ MANUAL_COLUMNS = {
     18: "revised_etd",
     19: "revised_eta",
     20: "ndc_remarks",
-    21: "lh_pickup_date",
-    22: "lh_pickup_time",
     23: "status",
 }
 
@@ -94,10 +93,23 @@ def fetch_lccs_rows(from_date, to_date, hub_code=None, connection=None):
             connection.close()
 
 
+HEADER_SEARCH_ROWS = 10
+
+
+def header_row(sheet):
+    """Row holding the 24 tracker headers in D:AA (row 4 in the template; editors may move it)."""
+    for row in range(1, HEADER_SEARCH_ROWS + 1):
+        headers = [sheet.cell(row, FIRST_COLUMN + i).value for i in range(len(TRACKER_COLUMNS))]
+        if headers == list(TRACKER_COLUMNS):
+            return row
+    raise TrackerJobError(
+        f"'{sheet.title}' has no row with the 24 tracker headers in columns D:AA "
+        f"within the first {HEADER_SEARCH_ROWS} rows."
+    )
+
+
 def _check_headers(sheet):
-    headers = [sheet.cell(HEADER_ROW, FIRST_COLUMN + i).value for i in range(len(TRACKER_COLUMNS))]
-    if headers != list(TRACKER_COLUMNS):
-        raise TrackerJobError(f"'{sheet.title}' headers in D4:AA4 do not match the expected 24 columns.")
+    header_row(sheet)
     return sheet
 
 
@@ -120,7 +132,7 @@ def read_existing(sheet, existing=None):
     """Return {shipment_id: (region, values)} for rows that carry an LCCS_ID."""
     existing = {} if existing is None else existing
     default_region = sheet.title if sheet.title in REGION_SHEETS else ""
-    for row in range(FIRST_DATA_ROW, sheet.max_row + 1):
+    for row in range(header_row(sheet) + 1, sheet.max_row + 1):
         shipment_id = sheet.cell(row, ID_COLUMN).value
         values = [sheet.cell(row, FIRST_COLUMN + i).value for i in range(len(TRACKER_COLUMNS))]
         if shipment_id in (None, ""):
@@ -176,43 +188,46 @@ def _sort_key(item):
 
 
 def write_rows(sheet, rows):
-    last_row = max(sheet.max_row, FIRST_DATA_ROW)
-    for row in range(FIRST_DATA_ROW, last_row + 1):
+    header = header_row(sheet)
+    first_data_row = header + 1
+    last_row = max(sheet.max_row, first_data_row)
+    for row in range(first_data_row, last_row + 1):
         for column in range(REGION_COLUMN, FIRST_COLUMN + len(TRACKER_COLUMNS)):
             sheet.cell(row, column).value = None
     for offset, (shipment_id, (region, values)) in enumerate(sorted(rows.items(), key=_sort_key)):
-        row = FIRST_DATA_ROW + offset
+        row = first_data_row + offset
         sheet.cell(row, REGION_COLUMN).value = region or None
         sheet.cell(row, ID_COLUMN).value = shipment_id
         for index, value in enumerate(values):
             sheet.cell(row, FIRST_COLUMN + index).value = None if value == "" else value
 
-    sheet.cell(HEADER_ROW, REGION_COLUMN).value = REGION_HEADER
-    sheet.cell(HEADER_ROW, ID_COLUMN).value = ID_HEADER
+    sheet.cell(header, REGION_COLUMN).value = REGION_HEADER
+    sheet.cell(header, ID_COLUMN).value = ID_HEADER
     sheet.column_dimensions["B"].hidden = True
     sheet.column_dimensions["C"].hidden = True
-    end_row = max(MIN_DROPDOWN_ROWS, FIRST_DATA_ROW + len(rows) + 500)
+    end_row = max(MIN_DROPDOWN_ROWS, first_data_row + len(rows) + 500)
     status_validation = None
     for validation in sheet.data_validations.dataValidation:
         if validation.formula1 == STATUS_FORMULA:
             status_validation = validation
         elif "X" in str(validation.sqref).upper():
-            validation.sqref = openpyxl.worksheet.cell_range.MultiCellRange(f"X{FIRST_DATA_ROW}:X{end_row}")
+            validation.sqref = openpyxl.worksheet.cell_range.MultiCellRange(f"X{first_data_row}:X{end_row}")
     if status_validation is None:
         status_validation = DataValidation(type="list", formula1=STATUS_FORMULA, allow_blank=True)
         sheet.add_data_validation(status_validation)
-    status_validation.sqref = openpyxl.worksheet.cell_range.MultiCellRange(f"AA{FIRST_DATA_ROW}:AA{end_row}")
-    sheet.auto_filter.ref = f"D{HEADER_ROW}:AA{end_row}"
+    status_validation.sqref = openpyxl.worksheet.cell_range.MultiCellRange(f"AA{first_data_row}:AA{end_row}")
+    sheet.auto_filter.ref = f"D{header}:AA{end_row}"
     protect_sheet(sheet, len(rows))
 
 
 def protect_sheet(sheet, row_count):
     """Editors may type only in the team columns; LCCS columns and rows cannot be deleted."""
+    first_data_row = header_row(sheet) + 1
     unlocked = Protection(locked=False)
     for index in MANUAL_COLUMNS:
         letter = get_column_letter(FIRST_COLUMN + index)
         sheet.column_dimensions[letter].protection = unlocked  # empty cells below the data
-        for row in range(FIRST_DATA_ROW, FIRST_DATA_ROW + row_count):
+        for row in range(first_data_row, first_data_row + row_count):
             sheet.cell(row, FIRST_COLUMN + index).protection = unlocked
     protection = sheet.protection
     protection.sheet = True
@@ -233,15 +248,25 @@ def _new_region_sheet(workbook, title, template):
     """Copy the template layout (title, headers, widths, styles) into an empty sheet."""
     sheet = workbook.copy_worksheet(template)
     sheet.title = title
-    for row in range(FIRST_DATA_ROW, sheet.max_row + 1):
+    header = header_row(template)
+    for row in range(header + 1, sheet.max_row + 1):
         for column in range(1, sheet.max_column + 1):
             sheet.cell(row, column).value = None
-    sheet.cell(2, FIRST_COLUMN).value = f"LH Performance Tracker - {title}"
-    sheet.freeze_panes = template.freeze_panes
     validation = DataValidation(type="list", formula1="=NDC_Remarks_Options", allow_blank=True)
-    validation.add(f"X{FIRST_DATA_ROW}:X{MIN_DROPDOWN_ROWS}")
+    validation.add(f"X{header + 1}:X{MIN_DROPDOWN_ROWS}")
     sheet.add_data_validation(validation)
     return sheet
+
+
+def remove_title_rows(sheet):
+    """Delete everything above the header row so the headers sit in row 1."""
+    header = header_row(sheet)
+    if header == 1:
+        return
+    for merged in list(sheet.merged_cells.ranges):
+        if merged.min_row < header:
+            sheet.unmerge_cells(str(merged))
+    sheet.delete_rows(1, header - 1)
 
 
 def write_region_sheets(workbook, rows, sheets):
@@ -255,6 +280,8 @@ def write_region_sheets(workbook, rows, sheets):
             continue
         if name not in workbook.sheetnames:
             _new_region_sheet(workbook, name, template)
+        remove_title_rows(workbook[name])
+        workbook[name].freeze_panes = "D2"  # headers and hidden B:C stay in view
         write_rows(workbook[name], sheet_rows)
     for name in (SHEET_NAME, UNASSIGNED_SHEET):
         if name in workbook.sheetnames and not (name == UNASSIGNED_SHEET and by_sheet.get(name)):
