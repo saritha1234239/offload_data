@@ -75,6 +75,9 @@ def _date_variants(value, region):
     if _normalize_header(text) in HEADER_TOKENS:
         return []
 
+    iso_datetime = re.fullmatch(r"(\d{4}-\d{2}-\d{2})[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?", text)
+    if iso_datetime:
+        text = iso_datetime.group(1)
     candidates = [text]
     ambiguous = re.fullmatch(r"(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})", text)
     if ambiguous:
@@ -139,7 +142,7 @@ def _time_value(value):
         parsed = datetime.fromisoformat(str(value).strip())
     except ValueError:
         try:
-            parsed = datetime.strptime(str(value).strip(), "%H:%M")
+            parsed = time.fromisoformat(str(value).strip())
         except ValueError:
             return None
     return (parsed.hour * 3600 + parsed.minute * 60 + parsed.second) / 86400
@@ -175,6 +178,101 @@ def _is_header_row(values):
     return False
 
 
+TRACKER_SHEET = "LH Performance Tracker"
+TRACKER_HEADER_ROW = 4
+TRACKER_FIRST_COLUMN = 4  # D
+TRACKER_HEADERS = (
+    "Departure_Date", "Org", "Dest", "Lane", "Mawb(with prefix)", "Vendor_name",
+    "NFO_Flag", "Direct / Console", "Flight_Number", "ETD", "ETA", "Type as per ETD",
+    "Bags", "CD weight", "Total Cons", "Offloaded bags", "Impacted cons",
+    "Next_flight", "ETD", "ETA", "NDC_Remarks", "LH_Pickup_date", "LH_Pickup_time",
+    "Status",
+)
+
+
+def _column_letter(number):
+    letter = ""
+    while number:
+        number, remainder = divmod(number - 1, 26)
+        letter = chr(65 + remainder) + letter
+    return letter
+
+
+def _parse_lccs_tracker(sheet):
+    """Parse the LCCS-built LH Performance Tracker (headers in D4:AA4).
+
+    Every tracker row is a dispatched air MAWB from LCCS, and the team records
+    offloads as exceptions, so a blank Offloaded bags cell counts as 0.
+    """
+    rows = sheet.iter_rows(min_row=TRACKER_HEADER_ROW, values_only=True)
+    header_row = next(rows, None) or ()
+    width = TRACKER_FIRST_COLUMN - 1 + len(TRACKER_HEADERS)
+    header_row = tuple(header_row) + (None,) * max(0, width - len(header_row))
+    headers = tuple(_text(value) for value in header_row[TRACKER_FIRST_COLUMN - 1:width])
+    if headers != TRACKER_HEADERS:
+        raise WorkbookSyncError(f"'{sheet.title}' headers in D4:AA4 do not match the LH Performance Tracker layout.")
+
+    columns = []
+    for index, header in enumerate(TRACKER_HEADERS):
+        letter = _column_letter(TRACKER_FIRST_COLUMN + index)
+        key = f"tracker_{letter}_{_header_token(header, letter)}"
+        columns.append({"key": key, "label": f"{header} ({letter})"})
+
+    records = []
+    for row_number, row in enumerate(rows, start=TRACKER_HEADER_ROW + 1):
+        row = tuple(row) + (None,) * max(0, width - len(row))
+        values = row[TRACKER_FIRST_COLUMN - 1:width]
+        if not any(_text(value) for value in values):
+            continue
+        region = _text(row[1]).title() or "Unspecified"  # hidden column B, Org_Region
+        date_variants = _date_variants(values[0], region)
+        origin, destination = _text(values[1]), _text(values[2])
+        bags = _number(values[12])
+        offloaded = _number(values[15])
+        if offloaded is None and bags is not None:
+            offloaded = 0
+        records.append({
+            "sourceSheet": sheet.title,
+            "sourceRow": row_number,
+            "recordType": "Shipment",
+            "date": date_variants[0] if date_variants else "",
+            "dateVariants": date_variants,
+            "region": region,
+            "origin": origin,
+            "destination": destination,
+            "lane": _text(values[3]) or (f"{origin}-{destination}" if origin and destination else ""),
+            "mawb": _text(values[4]),
+            "vendor": _text(values[5]),
+            "flight": _text(values[8]),
+            "etd": _time_value(values[9]),
+            "eta": _time_value(values[10]),
+            "bags": bags,
+            "cdWeight": _number(values[13]),
+            "totalCons": _number(values[14]),
+            "offloadedBags": offloaded,
+            "impactedCons": _number(values[16]),
+            "nextFlight": _text(values[17]),
+            "nextEtd": _time_value(values[18]),
+            "nextEta": _time_value(values[19]),
+            "remarks": _text(values[23]),
+            "ndcRemarks": _text(values[20]),
+            "sourceValues": {
+                column["key"]: _source_value(value) for column, value in zip(columns, values)
+            },
+        })
+    dated = [record["date"] for record in records if record["date"]]
+    source = {
+        "name": sheet.title,
+        "rows": len(records),
+        "shipments": len(records),
+        "worksheetDetails": 0,
+        "undated": len(records) - len(dated),
+        "minDate": min(dated) if dated else "",
+        "maxDate": max(dated) if dated else "",
+    }
+    return {"columns": columns, "records": records, "sources": [source]}
+
+
 def parse_workbook(workbook_bytes):
     try:
         workbook = load_workbook(BytesIO(workbook_bytes), read_only=True, data_only=True)
@@ -182,6 +280,15 @@ def parse_workbook(workbook_bytes):
         raise WorkbookSyncError("The download is not a readable Excel workbook.") from exc
 
     sheets = {_normalize_name(sheet.title): sheet for sheet in workbook.worksheets}
+    tracker = sheets.get(_normalize_name(TRACKER_SHEET))
+    if tracker is not None and not any(_normalize_name(name) in sheets for name in EXPECTED_SHEETS):
+        try:
+            data = _parse_lccs_tracker(tracker)
+        finally:
+            workbook.close()
+        if not data["records"]:
+            raise WorkbookSyncError("The tracker workbook contains no dashboard rows.")
+        return data
     records = []
     columns = OrderedDict()
     sources = []

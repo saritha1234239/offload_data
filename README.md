@@ -9,6 +9,60 @@ offload percentage indicates poorer performance, and listed vendors and lanes
 are flagged for follow-up. The watchlist is independent of the dashboard
 filters.
 
+## LCCS tracker query and mapping
+
+`lccs_tracker.py` contains a parameterized source query using the tables and
+join keys from `Multijoins::lccscostQuery()`, plus the 24-column tracker mapping.
+It uses `XAWBID` as the source identifier, maps the fields present in that query,
+applies the PHP report's flight-number fallback and ETD slot boundaries, and
+rejects conflicting duplicate IDs. Manual values are supplied separately so
+source refreshes do not replace them. The 37 `NDC_Remarks` dropdown choices
+from the supplied screenshot are stored in order and validated on mapping.
+
+`LH Performance Tracker.xlsx` is a blank workbook template with the 24 headers
+at D4:AA4 and the NDC dropdown applied to column X for rows 5–5000. It is not
+connected to the LCCS pipeline or the public dashboard; share the file through
+OneDrive/SharePoint and assign team permissions there.
+
+The tracker covers all hubs (no per-user hub filter) and air MAWBs only
+(`XAWBMODE = 'A'`).
+
+To refresh the workbook (defaults: yesterday to today, all hubs):
+
+```powershell
+& .\.venv\Scripts\python.exe .\lccs_tracker_job.py --workbook "C:\path\to\LH Performance Tracker.xlsx"
+```
+
+For the shared OneDrive copy, save its location once and install the hourly
+Windows task (runs while the user is signed in; results go to
+`%LOCALAPPDATA%\OffloadDashboard\lccs-tracker.log`):
+
+```powershell
+& .\.venv\Scripts\python.exe .\lccs_tracker_job.py --set-workbook "C:\path\to\OneDrive\LH Performance Tracker - LCCS.xlsx"
+& .\.venv\Scripts\python.exe .\lccs_tracker_job.py --install-task
+```
+
+`--remove-task` stops the hourly refresh. Each run replaces the whole file, so
+edits a co-author makes in Excel for the web that have not yet synced to the
+running computer can be overwritten; OneDrive version history can restore them.
+
+The job stores each row's LCCS `XAWBID` in hidden column C (`LCCS_ID`),
+refreshes the LCCS columns, keeps team-entered columns (ETA, Total Cons,
+offload details, NDC_Remarks, LH pickup, Status), adds new MAWBs, and never
+deletes rows outside the refreshed dates. Close the workbook in Excel before a
+refresh. Rows typed without an `LCCS_ID`, or an `NDC_Remarks` value not in the
+list, stop the refresh without changing the file.
+
+The query also reproduces `Multijoins::skipTestingAWB()` (MAWBs with dockets for
+test client `206324` are excluded) and the report's NFO rule (any non-cancelled
+`xdockethdr` docket on the MAWB with `XDKTPROMODE = 'NFO'`). As in the PHP
+report, the Prime/Lean slot is set only for air MAWBs (`XAWBMODE = 'A'`).
+ETA, Total Cons, and LH pickup date/time remain blank because they are not in
+LCCS. The query runs against the LCCS read database (`SITE_DB_M`); connection
+details are entered on the running computer with
+`python lccs_connection.py --configure`. The tracker still needs durable storage
+and access control before any tracker data is served by the public dashboard.
+
 ## Automatically sync the workbook
 
 Render can download a SharePoint/OneDrive **Anyone** link without Microsoft
