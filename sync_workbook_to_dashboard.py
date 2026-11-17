@@ -1,5 +1,6 @@
 import argparse
 import getpass
+import http.client
 import json
 import os
 import subprocess
@@ -103,7 +104,7 @@ def sync_once():
         except (UnicodeDecodeError, json.JSONDecodeError):
             message = f"Dashboard upload failed with HTTP {exc.code}."
         raise WorkbookSyncError(message) from exc
-    except (URLError, TimeoutError, OSError) as exc:
+    except (URLError, TimeoutError, OSError, http.client.HTTPException) as exc:
         raise WorkbookSyncError(
             "Could not reach the dashboard upload API. Check the internet connection and dashboard URL."
         ) from exc
@@ -115,11 +116,30 @@ def sync_once():
     )
 
 
+def allow_task_on_battery(task_name):
+    """schtasks cannot set power options; new tasks otherwise skip runs on battery."""
+    script = (
+        f"$t = Get-ScheduledTask -TaskName '{task_name}'; "
+        "$t.Settings.DisallowStartIfOnBatteries = $false; "
+        "$t.Settings.StopIfGoingOnBatteries = $false; "
+        "$t.Settings.StartWhenAvailable = $true; "
+        "$t.Settings.ExecutionTimeLimit = 'PT30M'; "
+        "Set-ScheduledTask -InputObject $t | Out-Null"
+    )
+    subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+        check=True, capture_output=True, text=True,
+    )
+
+
 def install_task():
     if not CONFIG_PATH.is_file():
         raise WorkbookSyncError("Configure the local sync before installing its scheduled task.")
     script_path = Path(__file__).resolve()
-    action = f'"{sys.executable}" "{script_path}" --sync'
+    interpreter = Path(sys.executable)
+    if interpreter.with_name("pythonw.exe").is_file():
+        interpreter = interpreter.with_name("pythonw.exe")
+    action = f'"{interpreter}" "{script_path}" --sync'
     subprocess.run(
         [
             "schtasks.exe", "/Create", "/SC", "MINUTE", "/MO", "5",
@@ -129,6 +149,7 @@ def install_task():
         capture_output=True,
         text=True,
     )
+    allow_task_on_battery(TASK_NAME)
     print("Scheduled workbook sync every 5 minutes while you are signed in.")
 
 

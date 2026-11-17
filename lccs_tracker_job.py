@@ -216,6 +216,22 @@ def set_workbook(path):
     print(f"Tracker workbook saved: {path}")
 
 
+def allow_task_on_battery(task_name):
+    """schtasks cannot set power options; new tasks otherwise skip runs on battery."""
+    script = (
+        f"$t = Get-ScheduledTask -TaskName '{task_name}'; "
+        "$t.Settings.DisallowStartIfOnBatteries = $false; "
+        "$t.Settings.StopIfGoingOnBatteries = $false; "
+        "$t.Settings.StartWhenAvailable = $true; "
+        "$t.Settings.ExecutionTimeLimit = 'PT30M'; "
+        "Set-ScheduledTask -InputObject $t | Out-Null"
+    )
+    subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+        check=True, capture_output=True, text=True,
+    )
+
+
 def install_task():
     if saved_workbook() is None:
         raise TrackerJobError("Run --set-workbook first.")
@@ -231,6 +247,7 @@ def install_task():
          "/TR", action, "/F", "/IT", "/RL", "LIMITED"],
         check=True, capture_output=True, text=True,
     )
+    allow_task_on_battery(TASK_NAME)
     print(f"Scheduled '{TASK_NAME}' every hour while you are signed in. Log: {LOG_PATH}")
 
 

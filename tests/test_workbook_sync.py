@@ -160,15 +160,16 @@ class WorkbookSyncTests(unittest.TestCase):
                 return "https://example.test/download/workbook.xlsx"
 
         requests = []
+        expected = workbook_fixture()
 
         def open_request(request, timeout):
             requests.append(request)
-            return WorkbookResponse(workbook_fixture())
+            return WorkbookResponse(expected)
 
         with patch("workbook_sync.urlopen", side_effect=open_request):
             content = fetch_workbook("https://example.test/shared.xlsx?e=public")
 
-        self.assertEqual(content, workbook_fixture())
+        self.assertEqual(content, expected)
         self.assertEqual(len(requests), 1)
         self.assertIn("e=public", requests[0].full_url)
         self.assertIn("download=1", requests[0].full_url)

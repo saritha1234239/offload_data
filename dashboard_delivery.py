@@ -117,6 +117,10 @@ def build_email(snapshot, recipients, sender, now=None):
     return message, recipients
 
 
+def _smtp_features(smtp):
+    return ", ".join(sorted(smtp.esmtp_features)) or "none"
+
+
 def send_email(snapshot):
     host = _required_env("SMTP_HOST")
     recipients = _parse_recipients(
@@ -147,11 +151,28 @@ def send_email(snapshot):
                 smtp.sendmail(sender, envelope_recipients, message.as_string())
         else:
             with smtplib.SMTP(host, port, timeout=30) as smtp:
+                smtp.ehlo()
                 if use_starttls:
+                    if not smtp.has_extn("starttls"):
+                        raise DeliveryError(
+                            f"{host}:{port} does not offer STARTTLS (server offers: "
+                            f"{_smtp_features(smtp)}). Use port 587 on a submission server, "
+                            "port 465 for SSL, or set SMTP_STARTTLS=false only for an internal relay."
+                        )
                     smtp.starttls(context=ssl.create_default_context())
+                    smtp.ehlo()
                 if username:
+                    if not smtp.has_extn("auth"):
+                        raise DeliveryError(
+                            f"{host}:{port} does not accept username/password sign-in "
+                            f"(server offers: {_smtp_features(smtp)}). This looks like a relay "
+                            "or MX endpoint; use the authenticated submission server "
+                            "(for Microsoft 365: smtp.office365.com, port 587)."
+                        )
                     smtp.login(username, password)
                 smtp.sendmail(sender, envelope_recipients, message.as_string())
+    except DeliveryError:
+        raise
     except (OSError, smtplib.SMTPException) as exc:
         raise DeliveryError(
             f"SMTP delivery failed ({type(exc).__name__}); check relay settings and access."
