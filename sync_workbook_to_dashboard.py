@@ -16,7 +16,7 @@ from workbook_sync import MAX_WORKBOOK_BYTES, WorkbookSyncError, parse_workbook
 TOKEN_ENV = "DASHBOARD_UPLOAD_TOKEN"
 
 
-DEFAULT_ENDPOINT = "https://offload-dashboard.onrender.com/api/upload"
+DEFAULT_ENDPOINT = "https://offload-dashboard-9cl7.onrender.com/api/upload"
 TASK_NAME = "OffloadDashboardWorkbookSync"
 CONFIG_DIRECTORY = Path(
     os.environ.get("LOCALAPPDATA")

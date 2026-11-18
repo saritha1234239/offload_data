@@ -31,7 +31,7 @@ jobs:
       - name: Capture and email dashboard
         run: python dashboard_delivery.py
         env:
-          DASHBOARD_URL: https://offload-dashboard.onrender.com/
+          DASHBOARD_URL: https://offload-dashboard-9cl7.onrender.com/
           EMAIL_FROM: ${{ vars.EMAIL_FROM }}
           EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}

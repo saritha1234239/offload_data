@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 LOGGER = logging.getLogger("dashboard_delivery")
 TIMEZONE = timezone(timedelta(hours=5, minutes=30), name="IST")
-DEFAULT_DASHBOARD_URL = "https://offload-dashboard.onrender.com/"
+DEFAULT_DASHBOARD_URL = "https://offload-dashboard-9cl7.onrender.com/"
 DEFAULT_WHATSAPP_API_VERSION = "v22.0"
 WHATSAPP_BASE_URL = "https://graph.facebook.com"
 ENV_FILE = Path(__file__).with_name(".env")

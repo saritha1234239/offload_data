@@ -211,7 +211,7 @@ be signed in, online, and have the workbook available for scheduled uploads.
    The task runs every five minutes while that Windows user is signed in. To
    upload once manually, run `sync_workbook_to_dashboard.py --sync`. To stop
    scheduled uploads, run `sync_workbook_to_dashboard.py --remove-task`.
-4. Check `https://offload-dashboard.onrender.com/api/health`. A successful push
+4. Check `https://offload-dashboard-9cl7.onrender.com/api/health`. A successful push
    updates `workbookAutoSync.lastSuccessAt`, `rows`, and `version`; the
    `workbookUpload.enabled` field indicates whether the protected endpoint is
    configured.
