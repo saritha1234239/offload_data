@@ -77,14 +77,17 @@ class TrackerJobTests(unittest.TestCase):
             ["10:15:00", 4, 2, NDC_REMARK_OPTIONS[4], "Closed"],
         )
 
-    def test_rows_older_than_the_window_are_removed(self):
-        refresh(self.path, date(2026, 11, 14), date(2026, 11, 15),
-                source_rows=[source(1, "OLD", day="2026-11-14"), source(3, "KEEP", day="2026-11-15")])
-        result = refresh(self.path, date(2026, 11, 15), date(2026, 11, 16),
-                         source_rows=[source(3, "KEEP", day="2026-11-15"), source(2, "NEW")])
-        self.assertEqual(result["removed"], 1)
+    def test_rows_before_start_date_are_dropped_and_other_days_kept(self):
+        result = refresh(self.path, date(2026, 11, 15), date(2026, 11, 17),
+                         source_rows=[source(1, "BEFORE", day="2026-11-15"), source(2, "D16", day="2026-11-16"),
+                                      source(3, "D17", day="2026-11-17")])
+        self.assertEqual((result["removed"], result["total"]), (1, 2))
+        # A narrower refresh (only 17 Nov) keeps 16 Nov untouched and adds 18 Nov.
+        result = refresh(self.path, date(2026, 11, 17), date(2026, 11, 18),
+                         source_rows=[source(3, "D17", day="2026-11-17"), source(4, "D18", day="2026-11-18")])
+        self.assertEqual((result["removed"], result["total"]), (0, 3))
         sheet = self.sheet()
-        self.assertEqual([sheet["H2"].value, sheet["H3"].value, sheet["H4"].value], ["KEEP", "NEW", None])
+        self.assertEqual([sheet["H2"].value, sheet["H3"].value, sheet["H4"].value], ["D16", "D17", "D18"])
 
     def test_invalid_ndc_typed_in_workbook_stops_refresh_without_overwriting(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
@@ -132,11 +135,11 @@ class TrackerJobTests(unittest.TestCase):
 
     def test_datetime_departure_dates_are_stored_and_read_as_dates(self):
         from datetime import datetime
-        refresh(self.path, date(2026, 10, 20), date(2026, 10, 21),
-                source_rows=[source(1, "M1", day=datetime(2026, 10, 20, 0, 0)),
-                             source(2, "M2", day="2026-10-21T00:00:00")])
+        refresh(self.path, date(2026, 11, 20), date(2026, 11, 21),
+                source_rows=[source(1, "M1", day=datetime(2026, 11, 20, 0, 0)),
+                             source(2, "M2", day="2026-11-21T00:00:00")])
         sheet = self.sheet()
-        self.assertEqual([sheet["D2"].value, sheet["D3"].value], ["2026-10-20", "2026-10-21"])
+        self.assertEqual([sheet["D2"].value, sheet["D3"].value], ["2026-11-20", "2026-11-21"])
         self.assertEqual(_date_variants("2026-10-20T00:00:00", "North"), ["2026-10-20"])
 
     def test_dashboard_parser_rejects_tracker_without_rows(self):

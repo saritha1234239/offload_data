@@ -2,8 +2,8 @@
 
 LCCS columns are refreshed on every run. Columns the team fills in (offload
 details, NDC remarks, LH pickup, Status) are read back from the workbook first
-and preserved. Only the refreshed date window (default yesterday and today) is
-kept; older rows are removed.
+and preserved. The tracker keeps every MAWB departing on or after
+TRACKER_START_DATE (16 Nov 2026); each run re-reads that date to today.
 """
 import argparse
 import json
@@ -51,6 +51,7 @@ ID_HEADER = "LCCS_ID"
 REGION_COLUMN = 2  # B, hidden
 REGION_HEADER = "Org_Region"
 MIN_DROPDOWN_ROWS = 5000
+TRACKER_START_DATE = date(2026, 11, 16)  # first departure date the tracker holds
 SHEET_PASSWORD_ENV = "TRACKER_SHEET_PASSWORD"  # optional, in .env
 STATUS_OPTIONS = ("Ontime", "Delayed")
 STATUS_FORMULA = '"' + ",".join(STATUS_OPTIONS) + '"'
@@ -420,17 +421,23 @@ def refresh(workbook_path, from_date, to_date, hub_code=None, source_rows=None):
         for _, values in merged.values():
             if values[STATUS_INDEX] in (None, ""):
                 values[STATUS_INDEX] = status_formula
-    # The tracker holds only the refreshed window (default yesterday and today), and
-    # on a full (all-hub) refresh only the MAWBs LCCS still returns for it, so rows
-    # that stopped qualifying (e.g. changed to surface, deleted) are dropped.
+    # The tracker keeps every MAWB departing on or after TRACKER_START_DATE. Within
+    # the refreshed dates, a full (all-hub) refresh also drops MAWBs LCCS no longer
+    # returns (e.g. changed to surface, deleted). Days outside the refreshed dates
+    # are left as they are.
+    start = TRACKER_START_DATE.isoformat()
     window = (from_date.isoformat(), to_date.isoformat())
     returned = {str(_text_id(row)) for row in source_rows}
-    kept = {
-        shipment_id: row for shipment_id, row in merged.items()
-        if window[0] <= str(row[1][0] or "")[:10] <= window[1]
-        # An empty LCCS result is treated as a fault, never as "remove everything".
-        and (hub_code is not None or not returned or shipment_id in returned)
-    }
+
+    def keep(shipment_id, row):
+        day = str(row[1][0] or "")[:10]
+        if day < start:
+            return False
+        if window[0] <= day <= window[1] and hub_code is None and returned:
+            return shipment_id in returned  # an empty LCCS result is a fault: keep everything
+        return True
+
+    kept = {shipment_id: row for shipment_id, row in merged.items() if keep(shipment_id, row)}
     write_region_sheets(workbook, kept, sheets)
     save_atomically(workbook, workbook_path)
     return {"added": added, "updated": updated, "removed": len(merged) - len(kept), "total": len(kept)}
@@ -526,7 +533,8 @@ def _report(message, error=False):
 def main():
     parser = argparse.ArgumentParser(description="Refresh the LH Performance Tracker from LCCS.")
     parser.add_argument("--workbook", help="Tracker workbook to update (default: the saved one).")
-    parser.add_argument("--from-date", type=date.fromisoformat, help="YYYY-MM-DD (default: yesterday).")
+    parser.add_argument("--from-date", type=date.fromisoformat,
+                        help=f"YYYY-MM-DD (default: {TRACKER_START_DATE}, the tracker start date).")
     parser.add_argument("--to-date", type=date.fromisoformat, help="YYYY-MM-DD (default: today).")
     parser.add_argument("--hub", help="Optional origin hub code; default is all hubs.")
     mode = parser.add_mutually_exclusive_group()
@@ -549,7 +557,7 @@ def main():
         return 1
 
     to_date = args.to_date or date.today()
-    from_date = args.from_date or (to_date - timedelta(days=1))
+    from_date = args.from_date or TRACKER_START_DATE
     if from_date > to_date:
         parser.error("--from-date must be on or before --to-date")
     workbook = args.workbook or saved_workbook() or DEFAULT_WORKBOOK

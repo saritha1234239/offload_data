@@ -28,7 +28,7 @@ The tracker covers all hubs (no per-user hub filter) and air MAWBs only
 (`XAWBMODE = 'A'`). Rows for the refreshed dates that LCCS no longer returns
 (for example a MAWB changed to surface or deleted) are removed.
 
-To refresh the workbook (defaults: yesterday to today, all hubs):
+To refresh the workbook (defaults: 16 Nov 2026, the tracker start date, to today; all hubs):
 
 ```powershell
 & .\.venv\Scripts\python.exe .\lccs_tracker_job.py --workbook "C:\path\to\LH Performance Tracker.xlsx"
@@ -51,7 +51,8 @@ The job stores each row's LCCS `XAWBID` in hidden column C (`LCCS_ID`),
 refreshes the LCCS columns (including ETA from `XAWSARVTIME` and Total Cons,
 the count of dockets on the MAWB), keeps team-entered columns (offload
 details, NDC_Remarks, LH pickup, Status), adds new MAWBs, and keeps
-only the refreshed dates (yesterday and today by default), removing older rows.
+every MAWB departing on or after 16 Nov 2026 (`TRACKER_START_DATE`); earlier
+rows are removed.
 Region sheets are protected: editors can type only in the team columns and
 cannot insert or delete rows (set `TRACKER_SHEET_PASSWORD` in `.env` to require
 a password to unprotect). Close the workbook in Excel before a
