@@ -85,7 +85,7 @@ class DashboardDeliveryTests(unittest.TestCase):
         )
 
         self.assertEqual(recipients, ["one@example.com", "two@example.com"])
-        self.assertEqual(message["To"], "Undisclosed recipients")
+        self.assertEqual(message["To"], "undisclosed-recipients:;")
         self.assertNotIn("one@example.com", message.as_string())
         self.assertNotIn("two@example.com", message.as_string())
         image = next(part for part in message.walk() if part.get_content_type() == "image/png")

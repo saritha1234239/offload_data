@@ -95,7 +95,9 @@ def build_email(snapshot, recipients, sender, now=None):
     message = MIMEMultipart("related")
     message["Subject"] = f"Offload dashboard snapshot - {date_label}"
     message["From"] = sender
-    message["To"] = "Undisclosed recipients"
+    # RFC 5322 empty group: recipients stay hidden (BCC) and Exchange Online
+    # does not try to resolve the text as an address.
+    message["To"] = "undisclosed-recipients:;"
     message["Date"] = now.strftime("%a, %d %b %Y %H:%M:%S %z")
 
     content = MIMEMultipart("alternative")
@@ -129,7 +131,9 @@ def _smtp_features(smtp):
 
 
 def send_email(snapshot):
-    host = _required_env("SMTP_HOST")
+    host = os.environ.get("SMTP_HOST", "").strip() or os.environ.get("SMTP_SERVER", "").strip()
+    if not host:
+        raise DeliveryError("Missing required setting: SMTP_HOST (or SMTP_SERVER).")
     recipients = _parse_recipients(
         _required_env("EMAIL_RECIPIENTS"),
         "EMAIL_RECIPIENTS",
@@ -189,6 +193,11 @@ def send_email(snapshot):
             f"{host}:{port} rejected the sign-in for SMTP_USERNAME (server said {exc.smtp_code}: {reply.strip()}). "
             "Check SMTP_USERNAME is the full mailbox address and SMTP_PASSWORD is current; for Microsoft 365, "
             "SMTP AUTH must be enabled for that mailbox, and accounts with MFA need an app password."
+        ) from exc
+    except smtplib.SMTPResponseException as exc:
+        reply = exc.smtp_error.decode("utf-8", "replace") if isinstance(exc.smtp_error, bytes) else str(exc.smtp_error)
+        raise DeliveryError(
+            f"SMTP delivery failed ({type(exc).__name__}); server said {exc.smtp_code}: {reply.strip()}"
         ) from exc
     except (OSError, smtplib.SMTPException) as exc:
         raise DeliveryError(

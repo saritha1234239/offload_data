@@ -235,6 +235,15 @@ Values already set in the process environment take precedence. GitHub Actions
 cannot read this file, so the daily email keeps using repository secrets, and
 Render keeps its own `DASHBOARD_UPLOAD_TOKEN` setting.
 
+Run `python smtp_check.py` to check DNS, connection, TLS, and sign-in, then send
+a test email to `EMAIL_RECIPIENTS` (or `EMAIL_FROM`, then `SMTP_USERNAME` if the
+recipient list is empty). Use `--to` to override the destination, or
+`--check-only` to check the settings without sending. `--send` remains available
+as an explicit alias for the default send behavior. Password sign-in is refused
+unless the connection uses STARTTLS or implicit TLS on port 465. The checker
+accepts `SMTP_SERVER` if `SMTP_HOST` is unset; `SMTP_HOST` takes precedence
+when both are set.
+
 ## Daily dashboard snapshot
 
 The snapshot email is sent from the Windows computer at 2:30 PM by the
