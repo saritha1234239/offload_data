@@ -20,10 +20,13 @@ from dotenv import load_dotenv
 LOGGER = logging.getLogger("dashboard_delivery")
 TIMEZONE = timezone(timedelta(hours=5, minutes=30), name="IST")
 DEFAULT_DASHBOARD_URL = "https://offload-dashboard.onrender.com/"
-DEFAULT_EMAIL_FROM = "saritha.m@criticalog.com"
 DEFAULT_WHATSAPP_API_VERSION = "v22.0"
 WHATSAPP_BASE_URL = "https://graph.facebook.com"
 ENV_FILE = Path(__file__).with_name(".env")
+LOG_DIRECTORY = Path(os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or Path.home()) / "OffloadDashboard"
+LOG_PATH = LOG_DIRECTORY / "dashboard-email.log"
+TASK_NAME = "OffloadDashboardDailyEmail"
+TASK_TIME = "14:30"  # IST, the laptop's local time
 
 
 class DeliveryError(Exception):
@@ -131,7 +134,10 @@ def send_email(snapshot):
         _required_env("EMAIL_RECIPIENTS"),
         "EMAIL_RECIPIENTS",
     )
-    sender = os.environ.get("EMAIL_FROM", DEFAULT_EMAIL_FROM).strip() or DEFAULT_EMAIL_FROM
+    sender = (os.environ.get("EMAIL_FROM", "").strip()
+              or os.environ.get("SMTP_USERNAME", "").strip())
+    if not sender:
+        raise DeliveryError("Set EMAIL_FROM (or SMTP_USERNAME) in .env.")
     port = int(os.environ.get("SMTP_PORT", "587"))
     username = os.environ.get("SMTP_USERNAME", "")
     password = os.environ.get("SMTP_PASSWORD", "")
@@ -343,13 +349,53 @@ def send_whatsapp(snapshot):
     LOGGER.info("WhatsApp snapshot sent to %d recipient(s).", len(settings["recipients"]))
 
 
-def main():
-    load_dotenv(dotenv_path=ENV_FILE, override=False)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-        stream=sys.stdout,
+def install_task():
+    """Send the snapshot from this computer every day at TASK_TIME, using .env."""
+    import subprocess
+    from lccs_tracker_job import allow_task_on_battery
+
+    interpreter = Path(sys.executable)
+    windowless = interpreter.with_name("pythonw.exe")
+    if windowless.is_file():
+        interpreter = windowless
+    action = f'"{interpreter}" "{Path(__file__).resolve()}"'
+    subprocess.run(
+        ["schtasks.exe", "/Create", "/SC", "DAILY", "/ST", TASK_TIME, "/TN", TASK_NAME,
+         "/TR", action, "/F", "/IT", "/RL", "LIMITED"],
+        check=True, capture_output=True, text=True,
     )
+    allow_task_on_battery(TASK_NAME)  # also runs a missed send as soon as the laptop wakes
+    print(f"Scheduled '{TASK_NAME}' daily at {TASK_TIME}. Log: {LOG_PATH}")
+
+
+def remove_task():
+    import subprocess
+
+    subprocess.run(["schtasks.exe", "/Delete", "/TN", TASK_NAME, "/F"],
+                   check=True, capture_output=True, text=True)
+    print(f"Scheduled task '{TASK_NAME}' removed.")
+
+
+def _configure_logging():
+    handlers = []
+    if sys.stdout is not None:  # pythonw (scheduled task) has no console
+        handlers.append(logging.StreamHandler(sys.stdout))
+    try:
+        LOG_DIRECTORY.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(LOG_PATH, encoding="utf-8"))
+    except OSError:
+        pass
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+                        handlers=handlers or [logging.NullHandler()], force=True)
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ("--install-task", "--remove-task"):
+        (install_task if argv[0] == "--install-task" else remove_task)()
+        return 0
+    load_dotenv(dotenv_path=ENV_FILE, override=False)
+    _configure_logging()
     try:
         snapshot = render_dashboard()
         send_email(snapshot)

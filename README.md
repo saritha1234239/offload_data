@@ -237,6 +237,13 @@ Render keeps its own `DASHBOARD_UPLOAD_TOKEN` setting.
 
 ## Daily dashboard snapshot
 
+The snapshot email is sent from the Windows computer at 2:30 PM by the
+`OffloadDashboardDailyEmail` scheduled task, using the SMTP settings and
+`EMAIL_RECIPIENTS` in `.env` (install with `dashboard_delivery.py --install-task`,
+remove with `--remove-task`; log in `%LOCALAPPDATA%\OffloadDashboard\dashboard-email.log`).
+The computer must be on and online; a missed send runs when it wakes. The GitHub
+Actions workflow below is the alternative that does not need the computer.
+
 The [GitHub Actions workflow](./.github/workflows/daily-dashboard-snapshot.yml)
 runs at `09:00 UTC` (`2:30 PM` in India). GitHub-hosted runners use UTC for
 scheduled workflows, and GitHub may delay a scheduled run during periods of

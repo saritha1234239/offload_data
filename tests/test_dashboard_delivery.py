@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import sys
 import types
@@ -112,6 +113,20 @@ class DashboardDeliveryTests(unittest.TestCase):
         self.assertEqual(sent[1], ["one@example.com", "two@example.com"])
         self.assertNotIn("one@example.com", sent[2])
 
+    def test_sender_defaults_to_smtp_username_and_is_required(self):
+        environment = {"SMTP_HOST": "smtp.example.com", "EMAIL_RECIPIENTS": "one@example.com",
+                       "SMTP_USERNAME": "me@example.com", "SMTP_PASSWORD": "pw", "SMTP_STARTTLS": "false"}
+        with patch.dict(os.environ, environment, clear=True), \
+                patch("dashboard_delivery.smtplib.SMTP") as smtp_factory:
+            smtp = smtp_factory.return_value.__enter__.return_value
+            smtp.has_extn.return_value = True
+            dashboard_delivery.send_email(PNG_DATA)
+        self.assertEqual(smtp.sendmail.call_args[0][0], "me@example.com")
+        with patch.dict(os.environ, {"SMTP_HOST": "smtp.example.com", "EMAIL_RECIPIENTS": "one@example.com"},
+                        clear=True):
+            with self.assertRaisesRegex(DeliveryError, "EMAIL_FROM"):
+                dashboard_delivery.send_email(PNG_DATA)
+
     def test_send_email_rejects_unpaired_smtp_credentials(self):
         with patch.dict(os.environ, {
             "SMTP_HOST": "relay.example.com",
@@ -129,11 +144,17 @@ class DashboardDeliveryTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch.object(dashboard_delivery, "ENV_FILE", env_file), \
+                    patch.object(dashboard_delivery, "LOG_DIRECTORY", Path(temp_dir)), \
+                    patch.object(dashboard_delivery, "LOG_PATH", Path(temp_dir) / "email.log"), \
                     patch.dict(os.environ, {"SMTP_HOST": "from-process.example.com"}, clear=True), \
                     patch.object(dashboard_delivery, "render_dashboard", return_value=PNG_DATA), \
                     patch.object(dashboard_delivery, "send_email"), \
                     patch.object(dashboard_delivery, "send_whatsapp"):
-                self.assertEqual(dashboard_delivery.main(), 0)
+                self.assertEqual(dashboard_delivery.main([]), 0)
+                root = logging.getLogger()  # detach the temp log file before the folder is removed
+                for handler in list(root.handlers):
+                    root.removeHandler(handler)
+                    handler.close()
                 self.assertEqual(os.environ["SMTP_HOST"], "from-process.example.com")
                 self.assertEqual(os.environ["SMTP_PASSWORD"], "file-password")
 
