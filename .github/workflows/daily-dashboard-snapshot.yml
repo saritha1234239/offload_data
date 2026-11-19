@@ -1,8 +1,8 @@
 name: Daily dashboard snapshot
 
+# The daily 2:30 PM email is sent from the Windows computer (OffloadDashboardDailyEmail
+# task, settings in .env). This workflow only runs when started manually.
 on:
-  schedule:
-    - cron: "0 9 * * *"
   workflow_dispatch:
 
 permissions:
