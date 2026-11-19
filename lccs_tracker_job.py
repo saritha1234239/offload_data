@@ -6,12 +6,12 @@ and preserved. The tracker keeps every MAWB departing on or after
 TRACKER_START_DATE (16 Nov 2026); each run re-reads that date to today.
 """
 import argparse
+import io
 import json
 import os
 import re
 import subprocess
 import sys
-import tempfile
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -381,20 +381,37 @@ def write_region_sheets(workbook, rows, sheets):
         sheet.sheet_view.tabSelected = sheet is order[0]
 
 
-def save_atomically(workbook, path):
+def save_in_place(workbook, path):
+    """Overwrite the workbook's contents without replacing the file itself.
+
+    Replacing the file (write a copy, then rename it over the original) can make
+    OneDrive see a deleted file plus a new one, which breaks existing sharing links.
+    Writing into the same file keeps its OneDrive identity, so links keep working.
+    """
     path = Path(path)
-    descriptor, temporary = tempfile.mkstemp(prefix=".lh-tracker-", suffix=".xlsx", dir=path.parent)
-    os.close(descriptor)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    data = buffer.getvalue()
     try:
-        workbook.save(temporary)
-        os.replace(temporary, path)
+        handle = open(path, "r+b")
     except PermissionError as exc:
         raise WorkbookLockedError(
-            f"Could not replace {path.name}; it is open in desktop Excel. Close it, or use Excel for the web."
+            f"Could not write {path.name}; it is open in desktop Excel. Close it, or use Excel for the web."
         ) from exc
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    with handle:
+        original = handle.read()
+        try:
+            handle.seek(0)
+            handle.write(data)
+            handle.truncate()
+            handle.flush()
+            os.fsync(handle.fileno())
+        except OSError:
+            handle.seek(0)
+            handle.write(original)
+            handle.truncate()
+            handle.flush()
+            raise
 
 
 def refresh(workbook_path, from_date, to_date, hub_code=None, source_rows=None):
@@ -439,7 +456,7 @@ def refresh(workbook_path, from_date, to_date, hub_code=None, source_rows=None):
 
     kept = {shipment_id: row for shipment_id, row in merged.items() if keep(shipment_id, row)}
     write_region_sheets(workbook, kept, sheets)
-    save_atomically(workbook, workbook_path)
+    save_in_place(workbook, workbook_path)
     return {"added": added, "updated": updated, "removed": len(merged) - len(kept), "total": len(kept)}
 
 

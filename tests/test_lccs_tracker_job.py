@@ -9,7 +9,7 @@ import openpyxl
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from lccs_tracker import LCCS_TRACKER_QUERY, NDC_REMARK_OPTIONS, TRACKER_COLUMNS
-from lccs_tracker_job import TrackerJobError, mysql_query, refresh
+from lccs_tracker_job import TrackerJobError, mysql_query, refresh, save_in_place
 from workbook_sync import WorkbookSyncError, _date_variants, parse_workbook
 
 
@@ -328,6 +328,23 @@ class TrackerJobTests(unittest.TestCase):
         self.assertIn("%(from_date)s", converted)
         self.assertIn("%(testing_client_code)s", converted)
         self.assertNotIn(":hub_code", converted)
+
+
+class SaveInPlaceTests(unittest.TestCase):
+    def test_overwrites_the_same_file_instead_of_replacing_it(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, True)
+        path = folder / "tracker.xlsx"
+        first = openpyxl.Workbook()
+        first.active["A1"] = "old"
+        first.save(path)
+        file_id = path.stat().st_ino
+        second = openpyxl.Workbook()
+        second.active["A1"] = "new"
+        save_in_place(second, path)
+        self.assertEqual(path.stat().st_ino, file_id)
+        self.assertEqual(openpyxl.load_workbook(path).active["A1"].value, "new")
+        self.assertEqual([p.name for p in folder.iterdir()], ["tracker.xlsx"])
 
 
 if __name__ == "__main__":
