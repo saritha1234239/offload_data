@@ -233,25 +233,47 @@ def manual_values(values):
     return manual
 
 
-def merge(existing, source_rows):
+def remark_options(workbook):
+    """The NDC_Remarks dropdown choices as the team keeps them in the workbook.
+
+    The dropdown reads the NDC_Remarks_Options named range (the NDC_List sheet), which
+    the team may edit, so the list is read again on every refresh. The built-in list is
+    used only if that range is missing or empty.
+    """
+    defined = workbook.defined_names.get(NDC_FORMULA)
+    options = []
+    if defined is not None:
+        for sheet_name, reference in defined.destinations:
+            if sheet_name not in workbook.sheetnames:
+                continue
+            cells = workbook[sheet_name][reference.replace("$", "")]
+            if not isinstance(cells, tuple):
+                cells = ((cells,),)
+            elif cells and not isinstance(cells[0], tuple):
+                cells = (cells,)
+            options.extend(str(cell.value).strip() for row in cells for cell in row
+                           if cell.value not in (None, ""))
+    return tuple(options) or NDC_REMARK_OPTIONS
+
+
+def merge(existing, source_rows, options=NDC_REMARK_OPTIONS):
     manual_by_id = {shipment_id: manual_values(values) for shipment_id, (_, values) in existing.items()}
-    for shipment_id, manual in manual_by_id.items():
-        remark = manual.get("ndc_remarks")
-        if remark and remark not in NDC_REMARK_OPTIONS:
-            raise TrackerJobError(
-                f"NDC_Remarks for LCCS_ID {shipment_id} is not one of the dropdown options; "
-                "fix it in the workbook before refreshing."
-            )
+    # A remark that is not in the current list (e.g. chosen before an option was
+    # reworded) is kept as the team entered it and reported, rather than stopping
+    # the refresh.
+    unlisted = sorted({manual["ndc_remarks"] for manual in manual_by_id.values()
+                       if manual.get("ndc_remarks") and manual["ndc_remarks"] not in options})
+    options = tuple(options) + tuple(unlisted)
     merged = dict(existing)
     added = updated = 0
-    for record in map_lccs_rows(source_rows, manual_by_id):
+    for record in map_lccs_rows(source_rows, manual_by_id, options):
         if record["shipment_id"] in merged:
             updated += 1
         else:
             added += 1
         previous_region = merged.get(record["shipment_id"], ("", None))[0]
         merged[record["shipment_id"]] = (record.get("region") or previous_region, record["values"])
-    return merged, added, updated
+    return merged, added, updated, unlisted
 
 
 def _sort_key(item):
@@ -430,7 +452,7 @@ def refresh(workbook_path, from_date, to_date, hub_code=None, source_rows=None):
         read_existing(sheet, existing)
     if source_rows is None:
         source_rows = fetch_lccs_rows(from_date, to_date, hub_code)
-    merged, added, updated = merge(existing, source_rows)
+    merged, added, updated, unlisted = merge(existing, source_rows, remark_options(workbook))
     # If the team uses a Status formula, give new rows the same formula.
     status_formula = next((values[STATUS_INDEX] for _, values in existing.values()
                            if _is_formula(values[STATUS_INDEX])), None)
@@ -457,7 +479,10 @@ def refresh(workbook_path, from_date, to_date, hub_code=None, source_rows=None):
     kept = {shipment_id: row for shipment_id, row in merged.items() if keep(shipment_id, row)}
     write_region_sheets(workbook, kept, sheets)
     save_in_place(workbook, workbook_path)
-    return {"added": added, "updated": updated, "removed": len(merged) - len(kept), "total": len(kept)}
+    result = {"added": added, "updated": updated, "removed": len(merged) - len(kept), "total": len(kept)}
+    if unlisted:
+        result["unlisted_remarks"] = unlisted
+    return result
 
 
 def refresh_with_retry(workbook_path, from_date, to_date, hub_code=None,
@@ -591,6 +616,8 @@ def main():
         f"{result['added']} added, {result['updated']} refreshed, "
         f"{result['removed']} rows removed, {result['total']} rows total."
     )
+    for remark in result.get("unlisted_remarks", ()):
+        _report(f"Note: NDC_Remarks not in the NDC_List dropdown (kept as entered): {remark}")
     return 0
 
 

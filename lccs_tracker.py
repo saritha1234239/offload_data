@@ -40,7 +40,7 @@ NDC_REMARK_OPTIONS = (
     "PUD Vehicle / GSA arrived in the Hub / Location after Airport Cut Off",
     "Missed connections due to lodgement failure",
     "Offloaded due to security reasons / prohibited contain by airlines",
-    "Missed connection due to non-availability of vendor",
+    "Missed connection due to non-availability of vendor/flight",
     "Holded At Hub due to no connection in same day",
     "Connected in later flight due to flight cancellation",
     "Missed Connection due to improper packaging",
@@ -223,7 +223,7 @@ def _dispatch_type(value):
     return "Lean 2"
 
 
-def map_lccs_row(source, manual=None):
+def map_lccs_row(source, manual=None, remark_options=NDC_REMARK_OPTIONS):
     shipment_id = _text(_value(source, "XAWBID"))
     if not shipment_id:
         raise TrackerDataError("LCCS row is missing XAWBID; no stable record key is available.")
@@ -265,7 +265,7 @@ def map_lccs_row(source, manual=None):
     if isinstance(impacted_cons, str):
         impacted_cons = impacted_cons.rstrip()
     ndc_remarks = _value(manual, "ndc_remarks")
-    if ndc_remarks and ndc_remarks not in NDC_REMARK_OPTIONS:
+    if ndc_remarks and ndc_remarks not in remark_options:
         raise TrackerDataError("NDC_Remarks must match one of the supplied dropdown options.")
 
     values = [
@@ -302,12 +302,12 @@ def map_lccs_row(source, manual=None):
     return {"shipment_id": shipment_id, "region": region, "values": values}
 
 
-def map_lccs_rows(source_rows, manual_by_shipment=None):
+def map_lccs_rows(source_rows, manual_by_shipment=None, remark_options=NDC_REMARK_OPTIONS):
     manual_by_shipment = manual_by_shipment or {}
     mapped = {}
     for source in source_rows:
         shipment_id = _text(_value(source, "XAWBID"))
-        record = map_lccs_row(source, manual_by_shipment.get(shipment_id))
+        record = map_lccs_row(source, manual_by_shipment.get(shipment_id), remark_options)
         previous = mapped.get(shipment_id)
         if previous is not None and previous != record:
             raise TrackerDataError(

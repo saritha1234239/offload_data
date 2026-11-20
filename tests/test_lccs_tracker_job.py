@@ -9,7 +9,7 @@ import openpyxl
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from lccs_tracker import LCCS_TRACKER_QUERY, NDC_REMARK_OPTIONS, TRACKER_COLUMNS
-from lccs_tracker_job import TrackerJobError, mysql_query, refresh, save_in_place
+from lccs_tracker_job import TrackerJobError, mysql_query, refresh, remark_options, save_in_place
 from workbook_sync import WorkbookSyncError, _date_variants, parse_workbook
 
 
@@ -89,13 +89,13 @@ class TrackerJobTests(unittest.TestCase):
         sheet = self.sheet()
         self.assertEqual([sheet["H2"].value, sheet["H3"].value, sheet["H4"].value], ["D16", "D17", "D18"])
 
-    def test_invalid_ndc_typed_in_workbook_stops_refresh_without_overwriting(self):
+    def test_unlisted_ndc_typed_in_workbook_is_kept_and_reported(self):
         refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
         workbook = openpyxl.load_workbook(self.path)
         workbook["West"]["X2"] = "typo"
         workbook.save(self.path)
-        with self.assertRaisesRegex(TrackerJobError, "LCCS_ID 1"):
-            refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
+        result = refresh(self.path, date(2026, 11, 16), date(2026, 11, 16), source_rows=[source(1, "M1")])
+        self.assertEqual(result["unlisted_remarks"], ["typo"])
         self.assertEqual(self.sheet()["X2"].value, "typo")
 
     def test_rows_typed_without_id_are_rejected(self):
@@ -345,6 +345,35 @@ class SaveInPlaceTests(unittest.TestCase):
         self.assertEqual(path.stat().st_ino, file_id)
         self.assertEqual(openpyxl.load_workbook(path).active["A1"].value, "new")
         self.assertEqual([p.name for p in folder.iterdir()], ["tracker.xlsx"])
+
+
+class RemarkOptionsTests(unittest.TestCase):
+    def test_reads_the_dropdown_list_the_team_keeps_in_the_workbook(self):
+        from openpyxl.workbook.defined_name import DefinedName
+        workbook = openpyxl.Workbook()
+        options = workbook.create_sheet("NDC_List")
+        options["A1"] = "NDC"
+        options["A2"] = "Missed connection due to non-availability of vendor/flight"
+        options["A3"] = "Vehicle caught by sales tax team"
+        workbook.defined_names["NDC_Remarks_Options"] = DefinedName(
+            "NDC_Remarks_Options", attr_text="NDC_List!$A$2:$A$3")
+        options = remark_options(workbook)
+        self.assertIn("Missed connection due to non-availability of vendor/flight", options)
+        self.assertNotIn("Missed connection due to non-availability of vendor", options)  # old wording
+        self.assertNotIn("NDC", options)  # header cell is outside the named range
+
+    def test_refresh_keeps_a_remark_that_is_no_longer_in_the_list(self):
+        folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, folder, True)
+        options = ("New wording",)
+        existing = {"1": ("North", ["2026-11-16"] + [None] * 19 + ["Old wording"] + [None] * 4)}
+        from lccs_tracker_job import merge
+        merged, added, updated, unlisted = merge(existing, [], options)
+        self.assertEqual(unlisted, ["Old wording"])
+        self.assertEqual(merged["1"][1][20], "Old wording")
+
+    def test_uses_the_built_in_list_without_the_named_range(self):
+        self.assertEqual(remark_options(openpyxl.Workbook()), NDC_REMARK_OPTIONS)
 
 
 if __name__ == "__main__":
